@@ -129,7 +129,7 @@ runtime thread. Command admission is deferred to step 5.
 [providers/mod.rs](providers/mod.rs) owns three fixed provider task slots, one
 optional worker, a single-slot raw intake queue, independent generation fences
 and a stop signal outside the queue. Consumers must recheck the relevant fence
-before publication. No provider decoder or connection to the engine exists yet.
+before publication. Step 4 adds the read-only source owner described below; no production financial run is connected.
 The worker consumer must perform bounded work; a nonresponsive worker retains
 its handle and blocks successful shutdown. A fresh owner cannot revive an old fence.
 
@@ -158,15 +158,16 @@ the usable-data interval before later recovery. Intentional cancellation resets
 that interval without incrementing transient failures; malformed protocol remains
 terminal. Each failed socket operation is recorded once, then closed/revoked. Denial/protocol/capacity
 failures are terminal for that operation. Metadata and handshakes have a 10-second
-total cap including local waits; a later explicit attempt retains pending backoff. No autonomous reconnect task exists; the sole bounded retry owner services an
-explicit operation. Step 4 owns metadata discovery/page coalescing.
+total cap including local waits; a later explicit attempt retains pending backoff. The sole bounded retry owner services each admitted operation. The explicitly
+started step-4 provider task owns reconnect and metadata discovery/page coalescing;
+there is no detached reconnect task.
 
 [memory.rs](providers/memory.rs) reserves adapter payload capacity before allocation
 and retains permits with returned bytes across queue/worker ownership. Its shared
 32 MiB ceiling refuses capacity rather than waiting for other buffers to be freed.
 Each socket reserves 4 MiB for bounded protocol framing/write/read storage; each
-returned/queued body reserves its payload allowance. No decoded books exist yet;
-step 4 must charge those against this same owner before allocation. TLS/kernel
+returned/queued body reserves its payload allowance. Step-4 book/identity growth
+uses this same owner before allocation. TLS/kernel
 state is outside this application-payload accounting. Intake older than two seconds
 is revoked without consumption; that buffer-age ceiling grants no price validity.
 Worker messages retain their own fence, so explicit provider recovery cannot leave
@@ -209,3 +210,121 @@ and requires joined global recovery. Public borrowed socket operations use drop
 guards: an outer timeout/select that drops them also closes/revokes, including
 cancellation while waiting for a permit. Obsolete/stopped intake has saturating
 reason counters rather than an unbounded event log.
+
+
+## Step-4 read-only source owner
+
+[providers/source.rs](providers/source.rs) owns `SourceWorker`, the sole native
+writer of `SourceState`, and its derived `SourceView`. `prepare` borrows a validated
+strategy, retains requirements and at most two normalized market descriptors, and
+uses ordinary unsupported capabilities. `Coordinator::start_sources` uses the
+existing single worker; `start_provider` explicitly starts one of the three fixed
+provider slots. Normal startup, screen refresh and financial Start/Advance do not
+call these APIs. No command, permission, SQLite revision or credential adapter is
+added. Trusted native setup supplies already-owned signing material; it performs
+no ordinary credential-item access.
+
+[Kalshi](providers/kalshi.rs) owns two bounded reconstructed books and opaque trade
+identity ledgers; [Coinbase](providers/coinbase.rs) and [Kraken](providers/kraken.rs)
+own their fixed BTC/USD trade formats/high-water facts. [wire.rs](providers/wire.rs)
+checks one-MiB input, depth48, 16-KiB lexical strings and bounded typed lists before
+retention, preserving numeric tokens with Serde raw values. Dollar contract prices
+map exactly to six-place cents (up to eight dollar fractional places); USD/BTC
+prices must fit the engine's existing six-place contract. No floating-point
+conversion or rounding is used. Incompatible precision is refused. Quantity,
+maker/taker direction, book clock/sequence and BRTI averages remain bounded labeled
+details, never additional strategy values or opening/settlement references.
+
+The service concurrently polls the installed WebSocket read/write halves inside
+one provider future. A normal control or metadata wake never drops a partial
+receive. After a handshake, the task rechecks source identities and the latest
+retained markets before sending its first subscriptions; retired markets from
+connection setup cannot become extra subscriptions. Session permission requires the parent provider permission and worker
+permission; dropping even an unpolled owned service closes/revokes its connection.
+Task return/panic/cancellation returns its control receiver through a drop guard;
+explicit provider recovery first joins the retained task, then uses fresh parent,
+source and session identities. One total five-second shutdown and the existing
+engine-save guard remain authoritative. No worker or recovery task detaches.
+
+Raw receipts retain charged bytes, local receipt time and the tokens captured
+before their receive. The worker validates sequence before filtering irrelevant
+Kalshi tickers. A book subscription gap revokes both books and native view epochs,
+while BRTI/spot streams retain their independent identities. One replaceable watch
+record holds at most book/trade/index recovery work; the finite seven-command
+mailbox retains initial and mandatory membership controls. Recovery is checked
+again at actual permit start; superseded work spends no attempt. A frame returned
+by an old pending receive is rejected. If that was the first response to a recovery,
+one coalesced counted snapshot retry obtains state under the new receive identity;
+it never relabels old bytes. A replacement restores each book separately. Empty
+liquidity expires only the absent initialized binding through the existing lease/
+reinitialization contract; no old ask remains usable and later deltas can recover.
+
+Acknowledgment and first-data waits are independent: five and ten seconds from
+actual control attempt, with both retained books required for replacement completion.
+Matching real data can also prove channel presence. Index-list absence remains
+awaiting data, distinct from explicit transport access refusal. An established
+read I/O timeout records one transient retry; expiration while waiting only for a
+control permit does not. Unsupported freshness never resets slow retry merely
+because frames arrived. Explicit close and unpolled owned-service Drop reset the
+usable interval without counting a transient failure. Ping wakeups coalesce while
+the library owns the pending automatic pong, independently of subscription permits.
+The keepalive counter counts explicit flush attempts, not every automatic wire pong.
+Network deadlines grant neither price validity nor history.
+
+[discovery.rs](providers/discovery.rs) orchestrates only the fixed public metadata
+routes; charged route/token/epoch receipts are parsed on the source worker.
+Startup uses at most six planned GETs, successor discovery four, and relevant
+lifecycle revalidation only the retained exact details. Retries have separate
+actual-attempt accounting. At most two pages/400 candidates and two confirmed
+market descriptors are retained. Cursor encoding preserves bounded opaque values.
+Schedules are exact UTC metadata mapped to signed monotonic offsets. The
+60/30/10 checks perform missing work, skip missed opportunities, and pace missing
+post-opening work to one opportunity/minute. A scheduling interruption or wall-
+clock discrepancy beyond the existing two-second intake bound revokes schedule
+assumptions and revalidates; that detection bound is no timeliness guarantee.
+Prepared handoff performs no boundary-search request or socket reopening. Due
+prepared boundaries are dispatched in opening-time order at their exact scheduled
+clock before the worker advances to its sampled time, including a tick that crosses
+opening. Known invalidity is applied first. Metadata/data accepted after opening
+cannot be moved to an earlier clock to create an entry; late readiness remains
+display-only. Controlled callers advance scheduled boundaries before ordinary
+current-time source events, as the owned worker does. Existing status/series
+validation can be reused across reconnect; metadata is reverified in the new
+source generation. One nonqueued scheduling-loss notice blocks market views
+immediately until the worker applies invalidation. Terminal notices cannot be
+overwritten by a weaker notice. The worker owns the reanchored epoch used by later
+connections; ordinary metadata-request duration alone is not a sleep event.
+
+An unentered same-identity schedule correction uses engine `ReplaceMarket` and
+then a fresh metadata request before rebuilding. Entered corrections stop the
+source context. The controlled evaluator's registered catalog is immutable:
+stop it on any registered descriptor replacement and require an explicit fresh
+pair/epoch. No connected financial evaluator exists here. Controlled `process`
+callers supply the actual completed frontier, drain one effect before another,
+check the full dependency stamp and transport permissions immediately before use,
+and follow the engine's rejection/Busy/Stop protocol. Worker/view invalidity has
+priority even with a full ordinary queue. `snapshot()` and scoped `details()`
+recheck retained permissions; neither performs I/O. Details for book/trades require
+the exact market identity and retire with its slot. A retained snapshot is a point-
+in-time fact; current permission alone grants no ongoing price freshness.
+
+The common 32-MiB owner covers socket/raw reservations, decoder scratch, book and
+identity growth, controls and retained derived views. Each book side permits8192
+levels; old/new overlap is reserved before mutation. A required over-cap book or
+identity ledger fails capacity instead of truncating/evicting. Each view retains a
+256-KiB reservation; native fixed requirements/details/control storage retains a
+64-KiB base charge shared by the worker, retained source handle and provider
+futures until the final owner drops it. Parsed metadata retains its scratch
+reservation through the command/reply handoff and caller cancellation.
+SourceState/evaluator allocations keep their existing separate
+proofs. [Step-4 evidence](../../docs/verification/issue-5.md#step-4-implementation-and-verification)
+contains the simultaneous-ownership argument and executed check limits. These are
+refusal bounds, not measured production capacity or allocator/RSS qualification.
+
+Focused evidence includes the unchanged learning JSON through actual Kalshi books,
+SourceState and Evaluator; two-book shared-gap/replacement on one socket; empty
+books; three tasks/seven controls; six/four GETs; repeated bounded rollover;
+identity/precision/capacity rejection; cancellation, explicit recovery and the
+inherited shutdown tests. U1–U7 in the [source profiles](../../docs/sources/README.md)
+remain blocked. No provider delivery, real entitlement/rights, complete history,
+financial outcome or production performance is established.

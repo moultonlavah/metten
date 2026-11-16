@@ -11,6 +11,12 @@ impl Default for Memory {
     }
 }
 impl Memory {
+    pub fn same_owner(&self, other: &Self) -> bool {
+        Arc::ptr_eq(&self.0, &other.0)
+    }
+    pub fn owns(&self, bytes: &Bytes) -> bool {
+        Arc::ptr_eq(&self.0, bytes._charge.semaphore())
+    }
     pub fn reserve(&self, bytes: usize) -> Result<OwnedSemaphorePermit, Failure> {
         self.0
             .clone()

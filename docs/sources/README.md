@@ -2,7 +2,7 @@
 
 Established as a documentation record on **2026-11-15** for step 1 of [issue #5](https://github.com/moultonlavah/metten/issues/5). **No connected source is accepted for runtime use by this guide.** Message mappings are documented below; freshness, continuity, permission and implementation gates remain open. A documented stop is a completed profile finding, not completed provider support.
 
-The [task brief](../proposals/issue-5-egm/source-profile-task-brief.md) bounds this work. The [approved sequence](../proposals/issue-5-egm/market-data-design.md#ordered-work-and-stopping-conditions), [product specification](../../METTEN_DESIGN_DRAFT_2026-11-12.md#9-security-sources-and-research-references), [ADR 0001](../adr/0001-rust-engine-and-tauri-boundaries.md) and [strategy reference](../strategies/reference.md#fields-and-variants) remain authoritative. This guide introduces no connection code, setup workflow, strategy syntax or new data product. There is nothing to connect or configure in this step.
+The [task brief](../proposals/issue-5-egm/source-profile-task-brief.md) bounds this work. The [approved sequence](../proposals/issue-5-egm/market-data-design.md#ordered-work-and-stopping-conditions), [product specification](../../METTEN_DESIGN_DRAFT_2026-11-12.md#9-security-sources-and-research-references), [ADR 0001](../adr/0001-rust-engine-and-tauri-boundaries.md) and [strategy reference](../strategies/reference.md#fields-and-variants) remain authoritative. This profile guide introduces no setup workflow, strategy syntax or new data product. The [native step-4 owner](../../src-tauri/src/README.md#step-4-read-only-source-owner) now exercises these mappings with synthetic messages and loopback peers; it registers no source command or automatic startup connection.
 
 ## What the named values mean
 
@@ -115,3 +115,19 @@ The focused document check traces task-brief A1–A7 to the profiles, common eng
 Step 1 is complete as an evidence inventory with explicit stops. Step 2 in the approved sequence is the small synchronous source owner and controlled state-transition tests; it requires separate implementation authorization and must preserve these capability stops. Provider/account connections remain later work. The rights questions are a concrete prerequisite to affected use/distribution, not a reason to replace sources or redesign the approved architecture here.
 
 Not checked: connections, accounts, credentials, actual denial/entitlement, legal clearance, builds, executable fixtures, app behavior, live feeds, settlement reconstruction, latency or performance qualification. No source/configuration/dependency changes, issue edits, commits or publication are part of this task.
+
+
+## Step-4 implementation disposition
+
+The concrete native decoders preserve exact mapped prices, provider identity/time,
+book quantities/clock/sequence and labeled spot direction/quantity details. BRTI
+raw ticks remain distinct from its averages/counts/windows. Controlled fixtures
+cover these mappings and fail-closed loss/recovery; they do not resolve U1–U7.
+Ordinary construction retains unsupported capabilities: a displayed received
+value is not strategy-usable, replacement data does not repair history, and no
+opening/settlement value is inferred. Kalshi's conservative opaque-trade ledger
+checks retained YES/NO price identity; broader provider precision/identity
+correspondence remains U4. Numeric-ID adapters retain latest-ID/price high-water
+facts across reconnect, not a universal historical conflict ledger. The
+[implementation record](../verification/issue-5.md#step-4-implementation-and-verification)
+identifies actual checks, ownership/refusal bounds and remaining qualification.

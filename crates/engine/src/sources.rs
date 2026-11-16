@@ -183,6 +183,11 @@ pub enum SourceEvent {
         bindings: Vec<BindingDescriptor>,
         capabilities: Vec<(u32, Capabilities)>,
     },
+    ReplaceMarket {
+        token: StreamToken,
+        expected: MarketDescriptor,
+        replacement: MarketDescriptor,
+    },
     Metadata {
         token: StreamToken,
         market_id: String,
@@ -933,6 +938,80 @@ impl SourceState {
                 self.add_bindings(&bindings, &capabilities);
                 let ids: Vec<_> = bindings.iter().map(|b| b.binding_id).collect();
                 self.accepted(&mut effect, c.at_ms, &ids, previous_ready)?;
+                Ok(effect)
+            }
+            SourceEvent::ReplaceMarket {
+                token,
+                expected,
+                replacement,
+            } => {
+                self.check_token(Stream::Metadata, token)?;
+                for text in [
+                    &expected.series_id,
+                    &expected.market_id,
+                    &expected.contract_id,
+                ] {
+                    if text.len() > 128 || text.capacity() > 128 {
+                        return Err(failure("resource_limit"));
+                    }
+                }
+                let index = self
+                    .markets
+                    .iter()
+                    .position(|m| m.descriptor == expected)
+                    .ok_or_else(|| failure("identity_mismatch"))?;
+                if [
+                    &replacement.series_id,
+                    &replacement.market_id,
+                    &replacement.contract_id,
+                ]
+                .iter()
+                .any(|s| s.len() > 128 || s.capacity() > 128)
+                {
+                    self.invalidate(Scope::Market, Unavailable::MetadataChanged, c.at_ms, None)?;
+                    self.revocation_required |= (1 << Stream::Book.index())
+                        | (1 << Stream::Trades.index())
+                        | (1 << Stream::Metadata.index());
+                    return Err(failure("resource_limit"));
+                }
+                if expected == replacement {
+                    let mut effect = self.effect(c, vec![], vec![], &[])?;
+                    self.accepted(&mut effect, c.at_ms, &[], previous_ready)?;
+                    return Ok(effect);
+                }
+                if self.markets[index].entered {
+                    return self.stop(c.at_ms);
+                }
+                let mut effect =
+                    self.invalidate(Scope::Market, Unavailable::MetadataChanged, c.at_ms, None)?;
+                let valid = expected.series_id == replacement.series_id
+                    && expected.market_id == replacement.market_id
+                    && expected.contract_id == replacement.contract_id
+                    && strategy::validate_market_descriptor(&replacement, &expected.series_id)
+                        .is_ok()
+                    && !self.markets.iter().enumerate().any(|(i, m)| {
+                        i != index
+                            && m.descriptor.open_ms < replacement.close_ms
+                            && replacement.open_ms < m.descriptor.close_ms
+                    });
+                if !valid {
+                    // Error has no effect: the consumer must deliver the revocation explicitly.
+                    self.revocation_required |= (1 << Stream::Book.index())
+                        | (1 << Stream::Trades.index())
+                        | (1 << Stream::Metadata.index());
+                    return Err(failure("identity_mismatch"));
+                }
+                self.markets[index].descriptor = replacement;
+                self.current = self
+                    .markets
+                    .iter()
+                    .find(|m| {
+                        m.verified
+                            && i128::from(m.descriptor.open_ms) <= i128::from(c.at_ms)
+                            && i128::from(c.at_ms) < i128::from(m.descriptor.close_ms)
+                    })
+                    .map(|m| m.descriptor.market_id.clone());
+                effect.batch.current_admission = self.admission(c.at_ms);
                 Ok(effect)
             }
             SourceEvent::Metadata {

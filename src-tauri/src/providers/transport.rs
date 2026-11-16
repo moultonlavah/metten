@@ -15,6 +15,7 @@ pub struct Connection {
     provider: Provider,
     fence: Fence,
     generation: u64,
+    retry: Arc<std::sync::Mutex<budget::Retry>>,
     _memory: tokio::sync::OwnedSemaphorePermit,
 }
 impl Connection {
@@ -24,6 +25,9 @@ impl Connection {
     }
     pub async fn close(&mut self, deadline: Instant) -> Result<(), Failure> {
         self.fence.revoke();
+        if let Ok(mut retry) = self.retry.lock() {
+            retry.delay(Failure::Stopped);
+        }
         let mut socket = self.socket.take();
         if let Some(socket) = &mut socket {
             tokio::time::timeout_at(deadline, socket.close(None))
@@ -32,6 +36,14 @@ impl Connection {
                 .map_err(|_| Failure::Transport)
         } else {
             Ok(())
+        }
+    }
+}
+impl Drop for Connection {
+    fn drop(&mut self) {
+        self.fence.revoke();
+        if let Ok(mut retry) = self.retry.lock() {
+            retry.delay(Failure::Stopped);
         }
     }
 }
@@ -69,7 +81,7 @@ pub struct Transport {
     client: reqwest::Client,
     budgets: [Arc<std::sync::Mutex<Budget>>; 3],
     memory: memory::Memory,
-    retries: [std::sync::Mutex<budget::Retry>; 3],
+    retries: [Arc<std::sync::Mutex<budget::Retry>>; 3],
     http_slots: Arc<tokio::sync::Semaphore>,
     handshake_slots: [Arc<tokio::sync::Semaphore>; 3],
     #[cfg(test)]
@@ -92,7 +104,7 @@ impl Transport {
             budgets: std::array::from_fn(|_| Arc::new(std::sync::Mutex::new(Budget::new()))),
             memory: memory::Memory::default(),
             retries: std::array::from_fn(|index| {
-                std::sync::Mutex::new(budget::Retry::new(index as u64 + 1))
+                Arc::new(std::sync::Mutex::new(budget::Retry::new(index as u64 + 1)))
             }),
             http_slots: Arc::new(tokio::sync::Semaphore::new(2)),
             handshake_slots: std::array::from_fn(|_| Arc::new(tokio::sync::Semaphore::new(1))),
@@ -380,6 +392,7 @@ impl Transport {
             provider,
             fence: fence.clone(),
             generation,
+            retry: self.retries[provider.index()].clone(),
             _memory: memory,
         })
     }
@@ -563,6 +576,7 @@ pub async fn local_connection(
         provider,
         fence,
         generation,
+        retry: Arc::new(std::sync::Mutex::new(budget::Retry::new(1))),
         _memory: memory::Memory::default().reserve(4 * MAX_BYTES).unwrap(),
     }
 }
@@ -603,6 +617,387 @@ pub(super) async fn send_control<S: tokio::io::AsyncRead + tokio::io::AsyncWrite
     .await
 }
 
+impl Transport {
+    /// One owned provider future services both halves; normal control wakeups never cancel reads.
+    pub(super) async fn serve(
+        &self,
+        mut connection: Connection,
+        controls: &mut mpsc::Receiver<Control>,
+        intake: mpsc::Sender<Intake>,
+        tokens: [metten_engine::sources::StreamToken; 6],
+        mut stop: watch::Receiver<bool>,
+        progress: Option<watch::Sender<Progress>>,
+    ) -> Result<(), Failure> {
+        if let Some(progress) = &progress {
+            progress.send_modify(|state| {
+                for (i, token) in tokens.iter().enumerate() {
+                    state.tokens[i].get_or_insert(*token);
+                }
+            });
+        }
+        let provider = connection.provider;
+        let fence = connection.fence.clone();
+        let operation = InFlight {
+            connection: &mut connection,
+            completed: false,
+            retry: &self.retries[provider.index()],
+        };
+        let socket = operation.connection.socket.take().ok_or(Failure::Stopped)?;
+        let (mut writer, mut reader) = socket.split();
+        let (pong_tx, mut pong_rx) = mpsc::channel(1);
+        let mut read_progress = progress.as_ref().map(|p| p.subscribe());
+        let mut read_stop = stop.clone();
+        let read_fence = fence.clone();
+        let io_timeout = std::sync::atomic::AtomicBool::new(false);
+        let read = async {
+            loop {
+                let deadline = Instant::now() + Duration::from_secs(10);
+                let charge = self.memory.reserve(MAX_BYTES)?;
+                let mut receipt_tokens = tokens;
+                if let Some(progress) = &progress {
+                    for (i, token) in progress.borrow().tokens.iter().enumerate() {
+                        if let Some(token) = token {
+                            receipt_tokens[i] = *token;
+                        }
+                    }
+                }
+                let message = read_fence
+                    .run(
+                        deadline,
+                        bounded(&mut read_stop, deadline, async {
+                            let receive=reader.next();tokio::pin!(receive);
+                            loop {
+                                let timed=read_progress.as_ref().and_then(|p|p.borrow().deadline()).unwrap_or(deadline).min(deadline);
+                                let changed=async {if let Some(p)=&mut read_progress{p.changed().await.map_err(|_|Failure::Stopped)}else{std::future::pending::<Result<(),Failure>>().await}};
+                                tokio::select!{biased;
+                                    _=tokio::time::sleep_until(timed)=>return Err(Failure::Deadline),
+                                    change=changed=>{change?;},
+                                    message=&mut receive=>break message.ok_or(Failure::Transport)?.map_err(websocket_failure),
+                                }
+                            }
+                        }),
+                    )
+                    .await.inspect_err(|&error| {
+                        if error==Failure::Deadline {io_timeout.store(true,Ordering::SeqCst);}
+                    })?;
+                match message {
+                    Message::Text(text) => {
+                        let mut budget = self.budgets[provider.index()]
+                            .lock()
+                            .map_err(|_| Failure::Unavailable)?;
+                        budget.data_messages = budget
+                            .data_messages
+                            .checked_add(1)
+                            .ok_or(Failure::Capacity)?;
+                        drop(budget);
+                        let mut item = Intake::new(
+                            provider,
+                            &read_fence,
+                            memory::Bytes {
+                                data: text.as_bytes().to_vec(),
+                                _charge: charge,
+                            },
+                            Instant::now(),
+                        );
+                        item.source_tokens = Some(receipt_tokens);
+                        item.progress = progress.clone();
+                        admit(&intake, &read_fence, item)?;
+                    }
+                    Message::Ping(_) => {
+                        match pong_tx.try_send(()) {
+                            Ok(()) | Err(mpsc::error::TrySendError::Full(())) => (), // One wake suffices; the protocol owns the pending pong.
+                            Err(mpsc::error::TrySendError::Closed(())) => {
+                                return Err(Failure::Stopped);
+                            }
+                        }
+                    }
+                    Message::Pong(_) => (),
+                    Message::Close(_) => return Err(Failure::Transport),
+                    _ => return Err(Failure::Protocol),
+                }
+            }
+            #[allow(unreachable_code)]
+            Ok::<(), Failure>(())
+        };
+        let write_fence = fence.clone();
+        let mut recovery_changes = progress.as_ref().map(|p| p.subscribe());
+        let write = async {
+            loop {
+                if *stop.borrow() {
+                    return Err(Failure::Stopped);
+                }
+                let desired = progress
+                    .as_ref()
+                    .and_then(|p| p.borrow().recovery.iter().flatten().next().cloned());
+                let (recovery, command) = if pong_rx.try_recv().is_ok() {
+                    (false, None)
+                } else if let Some(command) = desired {
+                    (true, Some(command))
+                } else {
+                    tokio::select! {biased;
+                        _=stop.changed()=>return Err(Failure::Stopped),
+                        pong=pong_rx.recv()=>{if pong.is_none(){return Err(Failure::Stopped)}(false,None)},
+                        changed=async {if let Some(p)=&mut recovery_changes {p.changed().await.map_err(|_|Failure::Stopped)} else {std::future::pending::<Result<(),Failure>>().await}}=>{changed?;continue},
+                        command=controls.recv()=>(false,Some(command.ok_or(Failure::Stopped)?)),
+                    }
+                };
+                if let Some(Control::KalshiBookUpdate {
+                    token: Some(token),
+                    action: BookAction::Snapshot,
+                    ..
+                }) = &command
+                    && progress.as_ref().is_some_and(|p| {
+                        p.borrow()
+                            .desired_book
+                            .is_some_and(|desired| desired != *token)
+                    })
+                {
+                    continue;
+                }
+                let text = command
+                    .as_ref()
+                    .map(|command| command.encode(provider))
+                    .transpose()?;
+                let deadline = Instant::now() + Duration::from_secs(5);
+                let traffic = if command.is_some() {
+                    Traffic::Control
+                } else {
+                    Traffic::KeepAlive
+                };
+                let mut permit = self.permit(provider, traffic, &mut stop, deadline).await?;
+                let attempted = AtomicBool::new(false);
+                write_fence
+                    .run(
+                        deadline,
+                        bounded(&mut stop, deadline, async {
+                            let mut admitted = Ok(false);
+                            if let (Some(progress), Some(command)) = (&progress, &command) {
+                                progress.send_modify(|p| {
+                                    if !recovery
+                                        || p.recovery.iter().flatten().any(|c| c == command)
+                                    {
+                                        admitted = permit.start().map(|_| true);
+                                        if admitted == Ok(true) {
+                                            for pending in &mut p.recovery {
+                                                if pending.as_ref() == Some(command) {
+                                                    *pending = None;
+                                                }
+                                            }
+                                            p.request(command);
+                                        }
+                                    }
+                                });
+                            } else {
+                                admitted = permit.start().map(|_| true);
+                            }
+                            if !admitted? {
+                                return Ok(());
+                            }
+                            attempted.store(true, Ordering::SeqCst);
+                            if let Some(command) = text {
+                                writer
+                                    .send(Message::Text(command.into()))
+                                    .await
+                                    .map_err(websocket_failure)
+                            } else {
+                                writer.flush().await.map_err(websocket_failure)
+                            }
+                        }),
+                    )
+                    .await
+                    .inspect_err(|&error| {
+                        if error == Failure::Deadline && attempted.load(Ordering::SeqCst) {
+                            io_timeout.store(true, Ordering::SeqCst);
+                        }
+                    })?;
+            }
+            #[allow(unreachable_code)]
+            Ok::<(), Failure>(())
+        };
+        let result = tokio::try_join!(read, write).map(|_| ());
+        // Both child futures are gone before close; neither can outlive this provider slot.
+        let socket = writer.reunite(reader).map_err(|_| Failure::Unavailable)?;
+        operation.connection.socket = Some(socket);
+        if matches!(result, Err(Failure::Stopped)) {
+            let _ = operation.connection.close(Instant::now() + SHUTDOWN).await;
+        }
+        let timed_out = io_timeout.load(Ordering::SeqCst) && result == Err(Failure::Deadline);
+        if timed_out {
+            // Established I/O actually timed out; a control-permit expiry alone never enters this branch.
+            operation
+                .finish::<()>(Err(Failure::Transport))
+                .map_err(|error| {
+                    if error == Failure::Transport {
+                        Failure::Deadline
+                    } else {
+                        error
+                    }
+                })
+        } else {
+            operation.finish(result)
+        }
+    }
+}
+
+/// Transport wait deadlines only. These flags grant no freshness or history capability.
+#[derive(Clone)]
+pub(super) struct Progress {
+    requested: [Option<Instant>; 6],
+    pub acknowledged: [bool; 6],
+    data: [bool; 6],
+    books: [Option<String>; 2],
+    book_data: [bool; 2],
+    pending_ids: [Option<u32>; 6],
+    pub recovery: [Option<Control>; 3],
+    disabled: [bool; 6],
+    pub tokens: [Option<metten_engine::sources::StreamToken>; 6],
+    pub desired_book: Option<metten_engine::sources::StreamToken>,
+}
+impl Progress {
+    pub fn new() -> Self {
+        Self {
+            requested: [None; 6],
+            acknowledged: [false; 6],
+            data: [false; 6],
+            books: [None, None],
+            book_data: [false; 2],
+            pending_ids: [None; 6],
+            recovery: [None, None, None],
+            disabled: [false; 6],
+            tokens: [None; 6],
+            desired_book: None,
+        }
+    }
+    fn request(&mut self, command: &Control) {
+        use metten_engine::sources::Stream;
+        let stream = match command {
+            Control::Coinbase { subscribe: true } => Stream::Coinbase,
+            Control::Kraken { subscribe: true } => Stream::Kraken,
+            Control::KalshiSubscribe { channel, .. } => match channel {
+                Channel::Book => Stream::Book,
+                Channel::Trade => Stream::Trades,
+                Channel::Brti => Stream::Brti,
+                Channel::Lifecycle => Stream::Metadata,
+            },
+            Control::KalshiBookUpdate {
+                action: BookAction::Snapshot | BookAction::Add,
+                ..
+            } => Stream::Book,
+            Control::KalshiTradeUpdate {
+                action: BookAction::Add,
+                ..
+            } => Stream::Trades,
+            Control::KalshiIndexes { .. } => Stream::Brti,
+            _ => return,
+        };
+        if let Control::KalshiTradeUpdate { token, .. } = command {
+            self.tokens[Stream::Trades as usize] = Some(*token);
+        }
+        if let Control::KalshiBookUpdate {
+            token: Some(token), ..
+        } = command
+        {
+            self.tokens[Stream::Book as usize] = Some(*token);
+        }
+        let i = stream as usize;
+        if self.disabled[i] {
+            return;
+        }
+        if let Control::KalshiIndexes {
+            token: Some(token), ..
+        } = command
+        {
+            self.tokens[i] = Some(*token);
+        }
+        self.pending_ids[i] = match command {
+            Control::KalshiSubscribe { id, .. }
+            | Control::KalshiBookUpdate { id, .. }
+            | Control::KalshiTradeUpdate { id, .. }
+            | Control::KalshiIndexes { id, .. } => Some(*id),
+            _ => None,
+        };
+        self.requested[i] = Some(Instant::now());
+        self.data[i] = stream == Stream::Metadata;
+        self.acknowledged[i] = false;
+        if stream == Stream::Book
+            && let Control::KalshiSubscribe { markets, .. }
+            | Control::KalshiBookUpdate { markets, .. } = command
+        {
+            self.books = std::array::from_fn(|i| markets.get(i).cloned());
+            self.book_data = [false; 2];
+        }
+    }
+    pub fn disable(&mut self, stream: metten_engine::sources::Stream) {
+        self.requested[stream as usize] = None;
+        self.disabled[stream as usize] = true;
+        let slot = match stream {
+            metten_engine::sources::Stream::Book => Some(0),
+            metten_engine::sources::Stream::Trades => Some(1),
+            metten_engine::sources::Stream::Brti => Some(2),
+            _ => None,
+        };
+        if let Some(slot) = slot {
+            self.recovery[slot] = None;
+        }
+    }
+    pub fn recover(&mut self, control: Control) {
+        let slot = match &control {
+            Control::KalshiBookUpdate { .. } => 0,
+            Control::KalshiTradeUpdate { .. } => 1,
+            Control::KalshiIndexes { .. } => 2,
+            _ => return,
+        };
+        self.recovery[slot] = Some(control);
+    }
+    pub fn requested_stream(&self, id: u32) -> Option<metten_engine::sources::Stream> {
+        self.pending_ids
+            .iter()
+            .position(|pending| *pending == Some(id))
+            .map(|i| super::source::SOURCE_STREAMS[i])
+    }
+    pub fn acknowledge(&mut self, id: u32) {
+        for (i, pending) in self.pending_ids.iter().enumerate() {
+            if *pending == Some(id) {
+                self.acknowledged[i] = true;
+            }
+        }
+    }
+    pub fn received(&mut self, stream: metten_engine::sources::Stream, market: Option<&str>) {
+        self.acknowledged[stream as usize] = true;
+        if stream == metten_engine::sources::Stream::Book {
+            for (i, ticker) in self.books.iter().enumerate() {
+                if ticker.as_deref() == market {
+                    self.book_data[i] = true
+                }
+            }
+            self.data[stream as usize] = self
+                .books
+                .iter()
+                .enumerate()
+                .all(|(i, t)| t.is_none() || self.book_data[i]);
+        } else {
+            self.data[stream as usize] = true
+        }
+    }
+    fn deadline(&self) -> Option<Instant> {
+        self.requested
+            .iter()
+            .enumerate()
+            .filter_map(|(i, start)| {
+                start.and_then(|start| {
+                    if !self.acknowledged[i] {
+                        Some(start + Duration::from_secs(5))
+                    } else if !self.data[i] {
+                        Some(start + Duration::from_secs(10))
+                    } else {
+                        None
+                    }
+                })
+            })
+            .min()
+    }
+}
+
 #[cfg(test)]
 mod failure_tests {
     use super::*;
@@ -620,5 +1015,139 @@ mod failure_tests {
             websocket_failure(Error::Protocol(ProtocolError::InvalidOpcode(3))),
             Failure::Protocol
         );
+    }
+    #[test]
+    fn acknowledgment_and_both_replacement_books_have_independent_deadlines() {
+        let mut p = Progress::new();
+        p.request(&Control::KalshiSubscribe {
+            id: 1,
+            channel: Channel::Book,
+            markets: vec!["KXBTC15M-M".into(), "KXBTC15M-N".into()],
+        });
+        let start = p.requested[0].unwrap();
+        assert_eq!(p.deadline(), Some(start + Duration::from_secs(5)));
+        p.acknowledge(1);
+        assert_eq!(p.deadline(), Some(start + Duration::from_secs(10)));
+        p.received(metten_engine::sources::Stream::Book, Some("KXBTC15M-M"));
+        assert!(p.deadline().is_some());
+        p.received(metten_engine::sources::Stream::Book, Some("KXBTC15M-N"));
+        assert!(p.deadline().is_none());
+        for id in 1..10000 {
+            p.recover(Control::KalshiIndexes {
+                id,
+                sid: 3,
+                token: None,
+            });
+        }
+        assert_eq!(p.recovery.iter().flatten().count(), 1);
+        assert!(matches!(
+            p.recovery[2],
+            Some(Control::KalshiIndexes { id: 9999, .. })
+        ));
+    }
+    #[tokio::test(start_paused = true)]
+    async fn explicit_close_and_unpolled_owned_drop_restart_the_usable_interval() {
+        let transport = Transport::new(Environment::Demo).unwrap();
+        let strategy = metten_engine::strategy::ValidatedStrategy::parse(include_str!(
+            "../../../examples/learning.json"
+        ))
+        .unwrap();
+        let worker = SourceWorker::prepare(&strategy, &[], transport.memory().clone()).unwrap();
+        for close in [true, false] {
+            let retry = transport.retries[Provider::Coinbase.index()].clone();
+            {
+                let mut state = retry.lock().unwrap();
+                *state = budget::Retry::new(1);
+                for _ in 0..5 {
+                    state.delay(Failure::Transport);
+                }
+                state.usable(Instant::now());
+            }
+            let fence = Fence::new();
+            let mut connection = Connection {
+                socket: None,
+                provider: Provider::Coinbase,
+                generation: fence.token(),
+                fence: fence.clone(),
+                retry: retry.clone(),
+                _memory: transport.memory.reserve(4 * MAX_BYTES).unwrap(),
+            };
+            if close {
+                connection.close(Instant::now() + SHUTDOWN).await.unwrap();
+            } else {
+                let (_tx, mut controls) = mpsc::channel(1);
+                let (intake, _) = intake();
+                let (_stop, stop) = watch::channel(false);
+                drop(transport.serve(
+                    connection,
+                    &mut controls,
+                    intake,
+                    worker.tokens(),
+                    stop,
+                    None,
+                ));
+            }
+            assert!(!fence.current(fence.token()));
+            tokio::time::advance(Duration::from_secs(30)).await;
+            retry.lock().unwrap().usable(Instant::now());
+            assert!(
+                retry.lock().unwrap().slow(),
+                "the disconnected interval cannot count as usable data"
+            );
+        }
+    }
+    #[test]
+    fn known_brti_command_rejection_does_not_discard_contract_data() {
+        let memory = memory::Memory::default();
+        let strategy = super::super::tests::all_source_strategy();
+        let markets = super::super::tests::source_markets();
+        let mut worker = SourceWorker::prepare(&strategy, &markets, memory.clone()).unwrap();
+        let fence = Fence::new();
+        worker
+            .connection(
+                Provider::Kalshi,
+                worker.tokens()[0],
+                metten_engine::sources::Connection::Open,
+                0,
+            )
+            .unwrap();
+        let mut progress = Progress::new();
+        progress.request(&Control::KalshiSubscribe {
+            id: 3,
+            channel: Channel::Brti,
+            markets: vec![],
+        });
+        let progress = watch::channel(progress).0;
+        let feed = |worker: &mut SourceWorker, bytes: &[u8]| {
+            let mut item = Intake::new(
+                Provider::Kalshi,
+                &fence,
+                memory.copy(bytes).unwrap(),
+                Instant::now(),
+            );
+            item.source_tokens = Some(worker.tokens());
+            item.receipt_ms = Some(0);
+            item.progress = Some(progress.clone());
+            worker.process(item, 0, 0, |_| Ok(()))
+        };
+        feed(
+            &mut worker,
+            br#"{"type":"subscribed","msg":{"sid":1,"channel":"orderbook_delta"}}"#,
+        )
+        .unwrap();
+        feed(&mut worker,br#"{"type":"orderbook_snapshot","sid":1,"seq":1,"msg":{"market_ticker":"KXBTC15M-0","yes_dollars_fp":[["0.36","1"]],"no_dollars_fp":[["0.64","1"]]}}"#).unwrap();
+        let before = worker.snapshot(0).unwrap();
+        feed(
+            &mut worker,
+            br#"{"type":"error","id":3,"msg":{"code":9,"msg":"synthetic refusal"}}"#,
+        )
+        .unwrap();
+        assert!(fence.current(fence.token()));
+        assert!(before.stream_current(metten_engine::sources::Stream::Book));
+        assert!(!before.stream_current(metten_engine::sources::Stream::Brti));
+        assert!(worker.state.snapshot(0).unwrap().bindings.iter().filter(|b|b.requirement.field=="buyable_ask" && matches!(&b.binding.scope,metten_engine::strategy::BindingScope::Contract {market_id,..} if market_id=="KXBTC15M-0")).all(|b|b.initialized));
+        let token = worker.tokens()[2];
+        feed(&mut worker, br#"{"type":"error","id":3,"msg":{"code":9}}"#).unwrap();
+        assert_eq!(worker.tokens()[2], token);
     }
 }

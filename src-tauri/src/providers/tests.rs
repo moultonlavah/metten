@@ -76,7 +76,7 @@ fn routes_cannot_escape_manifest() {
         Route::Markets {
             min_close_ts: 1,
             max_close_ts: 2,
-            cursor: Some("?orders".into()),
+            cursor: Some("bad\ncursor".into()),
         },
     ] {
         assert!(route.path().is_err());
@@ -395,9 +395,13 @@ fn controls_have_exact_fixed_provider_scope() {
     );
     assert_eq!(
         serde_json::from_str::<serde_json::Value>(
-            &Control::KalshiIndexes { id: 2, sid: 1 }
-                .encode(Provider::Kalshi)
-                .unwrap()
+            &Control::KalshiIndexes {
+                id: 2,
+                sid: 1,
+                token: None
+            }
+            .encode(Provider::Kalshi)
+            .unwrap()
         )
         .unwrap(),
         serde_json::json!({"id":2,"cmd":"update_subscription","params":{"sid":1,"action":"indexlist"}})
@@ -1285,4 +1289,1699 @@ async fn established_socket_loss_paces_reconnect_and_restarts_usable_window() {
         .retry_usable(Provider::Coinbase, Instant::now())
         .unwrap();
     assert!(!transport.slow_retry(Provider::Coinbase).unwrap());
+}
+
+#[tokio::test]
+async fn session_parent_stop_cancels_wait_and_old_sessions_never_revive() {
+    let parent = Fence::new();
+    let old = parent.session().unwrap();
+    let old_token = old.token();
+    old.revoke();
+    assert!(!old.current(old_token));
+    let session = parent.session().unwrap();
+    let fence = session.clone();
+    let work = tokio::spawn(async move {
+        fence
+            .run(
+                Instant::now() + SHUTDOWN,
+                std::future::pending::<Result<(), Failure>>(),
+            )
+            .await
+    });
+    tokio::task::yield_now().await;
+    parent.revoke();
+    assert_eq!(work.await.unwrap(), Err(Failure::Stopped));
+    assert!(!session.current(session.token()));
+    assert!(parent.session().is_err());
+}
+
+#[tokio::test]
+async fn owned_service_preserves_partial_receive_during_control_and_stops() {
+    use futures_util::StreamExt;
+    use tokio::io::AsyncWriteExt;
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    let peer = tokio::spawn(async move {
+        let (socket, _) = listener.accept().await.unwrap();
+        let mut socket = tokio_tungstenite::accept_async(socket).await.unwrap();
+        socket.get_mut().write_all(&[0x81, 2, b'{']).await.unwrap();
+        assert!(socket.next().await.unwrap().unwrap().is_text());
+        socket.get_mut().write_all(b"}").await.unwrap();
+        assert!(
+            socket
+                .next()
+                .await
+                .is_none_or(|r| r.is_err() || r.unwrap().is_close())
+        );
+    });
+    let parent = Fence::new();
+    let fence = parent.session().unwrap();
+    let connection = transport::local_connection(address, Provider::Coinbase, fence.clone()).await;
+    let transport = Arc::new(transport::Transport::new(Environment::Demo).unwrap());
+    let (tx, mut rx) = mpsc::channel(1);
+    let (intake, mut received) = intake();
+    let (signal, stop) = watch::channel(false);
+    let strategy = metten_engine::strategy::ValidatedStrategy::parse(include_str!(
+        "../../../examples/learning.json"
+    ))
+    .unwrap();
+    let source = metten_engine::sources::SourceState::new(&strategy, &[], &[], &[]).unwrap();
+    let tokens = SOURCE_STREAMS.map(|s| source.token(s));
+    let running = transport.clone();
+    let task = tokio::spawn(async move {
+        running
+            .serve(connection, &mut rx, intake, tokens, stop, None)
+            .await
+    });
+    tx.send(Control::Coinbase { subscribe: true })
+        .await
+        .unwrap();
+    let item = tokio::time::timeout(SHUTDOWN, received.recv())
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(item.bytes.as_slice(), b"{}");
+    assert!(fence.current(fence.token()));
+    signal.send_replace(true);
+    assert_eq!(task.await.unwrap(), Err(Failure::Stopped));
+    peer.await.unwrap();
+    assert!(!fence.current(fence.token()));
+}
+
+#[test]
+fn real_book_decoder_drives_learning_strategy_without_changing_its_rules() {
+    use metten_engine::{sources::*, strategy::*};
+    fn complete(e: &mut Evaluator, effect: SourceEffect) -> Decision {
+        e.begin(effect.batch).unwrap();
+        loop {
+            let range = PriceRange {
+                minimum: Decimal::parse("1").unwrap(),
+                maximum: Decimal::parse("99").unwrap(),
+            };
+            let objective = ObjectiveView {
+                market_id: "KXBTC15M-M".into(),
+                requested_quantity: 1,
+                confirmed_quantity: 0,
+                locked_side: None,
+                attempt_state: AttemptState::None,
+                safeguards: Safeguards {
+                    allowed: true,
+                    yes: range.clone(),
+                    no: range,
+                },
+            };
+            match e.process_slice(SliceControl::Continue, Some(objective)) {
+                SliceResult::Pending { .. } => (),
+                SliceResult::Complete(d) => return d,
+                other => panic!("{other:?}"),
+            }
+        }
+    }
+    let strategy =
+        ValidatedStrategy::parse(include_str!("../../../examples/learning.json")).unwrap();
+    let market = MarketDescriptor {
+        series_id: "KXBTC15M".into(),
+        market_id: "KXBTC15M-M".into(),
+        contract_id: "contract-m".into(),
+        open_ms: 1,
+        close_ms: 900001,
+    };
+    let mut bindings = Vec::new();
+    for r in strategy.source_requirements() {
+        let sides = match r.side {
+            Some(SourceSide::Selected) => vec![Side::Yes, Side::No],
+            Some(SourceSide::Fixed(s)) => vec![s],
+            None => panic!("ask fixture"),
+        };
+        for side in sides {
+            bindings.push(BindingDescriptor {
+                binding_id: bindings.len() as u32 + 1,
+                input_id: r.input_id.clone(),
+                scope: BindingScope::Contract {
+                    market_id: market.market_id.clone(),
+                    contract_id: market.contract_id.clone(),
+                    side,
+                },
+            })
+        }
+    }
+    let caps: Vec<_> = bindings
+        .iter()
+        .map(|b| {
+            (
+                b.binding_id,
+                Capabilities {
+                    current: None,
+                    observations: None,
+                    history: None,
+                },
+            )
+        })
+        .collect();
+    let source =
+        SourceState::new(&strategy, std::slice::from_ref(&market), &bindings, &caps).unwrap();
+    let mut e = Evaluator::new(
+        strategy,
+        RunContext {
+            strategy_version: "learning".into(),
+            run_id: "controlled".into(),
+            go_time: "2026-11-16T00:00:00Z".into(),
+            series_id: "KXBTC15M".into(),
+            markets: vec![market.clone()],
+            bindings,
+        },
+    )
+    .unwrap();
+    let memory = memory::Memory::default();
+    let mut worker = SourceWorker::new(source, memory.clone()).unwrap();
+    worker.lease = Some(1_000_000);
+    let connection = worker
+        .connection(
+            super::Provider::Kalshi,
+            worker.state.token(Stream::Book),
+            Connection::Open,
+            0,
+        )
+        .unwrap();
+    complete(&mut e, connection);
+    let fence = Fence::new();
+    let mut ack = Intake::new(
+        super::Provider::Kalshi,
+        &fence,
+        memory
+            .copy(br#"{"type":"subscribed","msg":{"sid":1,"channel":"orderbook_delta"}}"#)
+            .unwrap(),
+        Instant::now(),
+    );
+    ack.source_tokens = Some(worker.tokens());
+    ack.receipt_ms = Some(0);
+    worker
+        .process(ack, 0, e.snapshot().evaluated_through_ms, |effect| {
+            complete(&mut e, effect);
+            Ok(())
+        })
+        .unwrap();
+    let feed = |worker: &mut SourceWorker, e: &mut Evaluator, seq: u64, at: u64, yes: &str| {
+        let no = if yes == "0.75" { "0.25" } else { "0.64" };
+        let bytes = format!(
+            r#"{{"type":"orderbook_snapshot","sid":1,"seq":{seq},"msg":{{"market_ticker":"KXBTC15M-M","yes_dollars_fp":[["{yes}","2"]],"no_dollars_fp":[["{no}","3"]]}}}}"#
+        );
+        let mut item = Intake::new(
+            super::Provider::Kalshi,
+            &fence,
+            memory.copy(bytes.as_bytes()).unwrap(),
+            Instant::now(),
+        );
+        item.source_tokens = Some(worker.tokens());
+        item.receipt_ms = Some(at);
+        let mut result = None;
+        worker
+            .process(item, at, e.snapshot().evaluated_through_ms, |effect| {
+                result = Some(complete(e, effect));
+                Ok(())
+            })
+            .unwrap();
+        result.unwrap()
+    };
+    feed(&mut worker, &mut e, 1, 0, "0.36");
+    let effect = worker
+        .state
+        .apply(source_envelope(
+            0,
+            SourceEvent::Metadata {
+                token: worker.state.token(Stream::Metadata),
+                market_id: market.market_id.clone(),
+                verified: true,
+            },
+        ))
+        .unwrap();
+    complete(&mut e, effect);
+    let effect = worker
+        .state
+        .apply(source_envelope(
+            1,
+            SourceEvent::Boundary {
+                market_id: market.market_id.clone(),
+            },
+        ))
+        .unwrap();
+    let first = complete(&mut e, effect);
+    assert!(first.checkpoints.contains_key("early_side_checkpoint"));
+    let later = feed(&mut worker, &mut e, 2, 60001, "0.75");
+    assert_eq!(
+        later.checkpoints["early_side_checkpoint"].side,
+        Some(Side::Yes)
+    );
+    assert!(
+        later
+            .leaves
+            .iter()
+            .any(|l| l.option_id == "opposite_side_first" && l.eligible)
+    );
+    assert_eq!(later.candidate.as_ref().unwrap().side, Side::No);
+    let old = worker.tokens();
+    fence.revoke();
+    let mut stale = Intake::new(
+        super::Provider::Kalshi,
+        &fence,
+        memory.copy(b"{}").unwrap(),
+        Instant::now(),
+    );
+    stale.source_tokens = Some(old);
+    assert_eq!(
+        worker.process(stale, 60002, e.snapshot().evaluated_through_ms, |_| Ok(())),
+        Err(Failure::Stopped)
+    );
+}
+
+#[tokio::test]
+async fn fixed_provider_task_and_owned_source_worker_publish_only_verified_values() {
+    use futures_util::{SinkExt, StreamExt};
+    use tokio_tungstenite::tungstenite::Message;
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    let peer = tokio::spawn(async move {
+        let (socket, _) = listener.accept().await.unwrap();
+        let mut socket = tokio_tungstenite::accept_async(socket).await.unwrap();
+        let subscription = socket.next().await.unwrap().unwrap().into_text().unwrap();
+        assert!(subscription.contains("BTC-USD"));
+        socket.send(Message::Text(r#"{"type":"last_match","product_id":"BTC-USD","trade_id":10,"price":"68000.12","time":"2026-11-16T00:00:00Z"}"#.into())).await.unwrap();
+        assert!(
+            socket
+                .next()
+                .await
+                .is_none_or(|m| m.is_err() || m.unwrap().is_close())
+        );
+    });
+    let strategy=metten_engine::strategy::ValidatedStrategy::parse(r#"{"format":2,"name":"Source task","inputs":[{"id":"spot","source":"coinbase","instrument":"btc_usd","field":"last_trade","unit":"usd_per_btc"}],"purchase_options":[{"id":"show","side":{"type":"fixed","side":"yes"},"when":{"type":"compare","left":{"reference":"spot"},"comparison":"greater_than","right":{"value":"1","unit":"usd_per_btc"}}}]}"#).unwrap();
+    let transport = Arc::new(transport::Transport::controlled(address));
+    let worker = SourceWorker::prepare(&strategy, &[], transport.memory().clone()).unwrap();
+    let mut owner = Coordinator::new();
+    let mut handle = owner.start_sources(worker).unwrap();
+    owner
+        .start_provider(Provider::Coinbase, transport.clone(), &mut handle, None)
+        .unwrap();
+    tokio::time::timeout(SHUTDOWN, async {
+        loop {
+            let received = handle
+                .latest
+                .borrow()
+                .as_ref()
+                .and_then(|v| v.snapshot().ok())
+                .is_some_and(|v| {
+                    v.bindings.iter().any(|b| {
+                        b.value.is_some_and(|v| v.millionths() == 68000120000) && !b.usable
+                    })
+                });
+            if received {
+                break;
+            }
+            handle.latest.changed().await.unwrap();
+        }
+    })
+    .await
+    .unwrap();
+    assert_eq!(transport.attempts(Provider::Coinbase).unwrap(), [0, 1, 1]);
+    owner.shutdown(Instant::now() + SHUTDOWN).await.unwrap();
+    assert!(owner.finished());
+    peer.await.unwrap();
+}
+
+pub(super) fn all_source_strategy() -> metten_engine::strategy::ValidatedStrategy {
+    use serde_json::json;
+    let mut learning: serde_json::Value =
+        serde_json::from_str(include_str!("../../../examples/learning.json")).unwrap();
+    let inputs = learning["inputs"].as_array_mut().unwrap();
+    for (id, source, field) in [
+        ("trade", "kalshi", "last_trade"),
+        ("index", "brti", "index_value"),
+        ("coin", "coinbase", "last_trade"),
+        ("krak", "kraken", "last_trade"),
+    ] {
+        let mut input = json!({"id":id,"source":source,"instrument":"btc_usd","field":field,"unit":"usd_per_btc"});
+        if source == "kalshi" {
+            input["instrument"] = json!("current_contract");
+            input["unit"] = json!("contract_cents");
+            input["side"] = json!("selected_side");
+        }
+        inputs.push(input);
+    }
+    metten_engine::strategy::ValidatedStrategy::parse(&learning.to_string()).unwrap()
+}
+pub(super) fn source_markets() -> Vec<metten_engine::strategy::MarketDescriptor> {
+    [0, 900000]
+        .into_iter()
+        .enumerate()
+        .map(|(i, open)| metten_engine::strategy::MarketDescriptor {
+            series_id: "KXBTC15M".into(),
+            market_id: format!("KXBTC15M-{i}"),
+            contract_id: format!("contract-{i}"),
+            open_ms: open,
+            close_ms: open + 900000,
+        })
+        .collect()
+}
+fn feed_source(
+    worker: &mut SourceWorker,
+    fence: &Fence,
+    provider: Provider,
+    bytes: &[u8],
+    at: u64,
+    tokens: Option<[metten_engine::sources::StreamToken; 6]>,
+) -> Result<(), Failure> {
+    let mut item = Intake::new(
+        provider,
+        fence,
+        worker.memory.copy(bytes).unwrap(),
+        Instant::now(),
+    );
+    item.source_tokens = Some(tokens.unwrap_or_else(|| worker.tokens()));
+    item.receipt_ms = Some(at);
+    worker.process(item, at, 0, |_| Ok(()))
+}
+fn book_frame(seq: u64, ticker: &str, yes: &str, no: &str) -> String {
+    format!(
+        r#"{{"type":"orderbook_snapshot","sid":1,"seq":{seq},"msg":{{"market_ticker":"{ticker}","yes_dollars_fp":{yes},"no_dollars_fp":{no}}}}}"#
+    )
+}
+#[test]
+fn empty_book_expires_old_side_without_poisoning_following_reconstruction() {
+    use metten_engine::sources::*;
+    let mut worker = SourceWorker::prepare(
+        &all_source_strategy(),
+        &source_markets(),
+        memory::Memory::default(),
+    )
+    .unwrap();
+    worker
+        .connection(
+            super::Provider::Kalshi,
+            worker.tokens()[0],
+            Connection::Open,
+            0,
+        )
+        .unwrap();
+    let fence = Fence::new();
+    feed_source(
+        &mut worker,
+        &fence,
+        super::Provider::Kalshi,
+        br#"{"type":"subscribed","msg":{"sid":1,"channel":"orderbook_delta"}}"#,
+        0,
+        None,
+    )
+    .unwrap();
+    for (seq, yes, no) in [
+        (1, r#"[["0.36","1"]]"#, r#"[["0.64","1"]]"#),
+        (2, "[]", "[]"),
+        (3, r#"[["0.40","1"]]"#, r#"[["0.60","1"]]"#),
+    ] {
+        let tokens = worker.tokens();
+        let old = worker.snapshot(seq).unwrap();
+        feed_source(
+            &mut worker,
+            &fence,
+            super::Provider::Kalshi,
+            book_frame(seq, "KXBTC15M-0", yes, no).as_bytes(),
+            seq,
+            None,
+        )
+        .unwrap();
+        let view = worker.state.snapshot(seq).unwrap();
+        let asks:Vec<_>=view.bindings.iter().filter(|b|b.requirement.field=="buyable_ask" && matches!(&b.binding.scope,metten_engine::strategy::BindingScope::Contract {market_id,..} if market_id=="KXBTC15M-0")).collect();
+        assert!(asks.iter().all(|b| b.initialized == (seq != 2)));
+        assert_eq!(
+            worker.tokens(),
+            tokens,
+            "empty liquidity must not strand the subscription token"
+        );
+        if seq == 2 {
+            assert!(!old.stream_current(Stream::Book));
+            assert!(asks.iter().all(|b| b.value.is_none() && !b.usable));
+        }
+    }
+}
+#[test]
+fn shared_book_gap_revokes_both_and_stale_completion_cannot_restore_either_or_brti() {
+    use metten_engine::sources::{Connection, Stream};
+    let mut worker = SourceWorker::prepare(
+        &all_source_strategy(),
+        &source_markets(),
+        memory::Memory::default(),
+    )
+    .unwrap();
+    worker
+        .connection(Provider::Kalshi, worker.tokens()[0], Connection::Open, 0)
+        .unwrap();
+    let fence = Fence::new();
+    for (sid, channel) in [(1, "orderbook_delta"), (2, "cfbenchmarks_value")] {
+        feed_source(
+            &mut worker,
+            &fence,
+            Provider::Kalshi,
+            format!(r#"{{"type":"subscribed","msg":{{"sid":{sid},"channel":"{channel}"}}}}"#)
+                .as_bytes(),
+            0,
+            None,
+        )
+        .unwrap();
+    }
+    feed_source(
+        &mut worker,
+        &fence,
+        Provider::Kalshi,
+        br#"{"type":"cfbenchmarks_value_indexlist","sid":2,"seq":1,"msg":{"index_ids":["BRTI"]}}"#,
+        0,
+        None,
+    )
+    .unwrap();
+    feed_source(&mut worker,&fence,Provider::Kalshi,br#"{"type":"cfbenchmarks_value","sid":2,"seq":2,"msg":{"index_id":"BRTI","data":"{\"id\":\"BRTI\",\"time\":1,\"value\":\"68000.12\"}"}}"#,0,None).unwrap();
+    for (seq, ticker) in [(1, "KXBTC15M-0"), (2, "KXBTC15M-1")] {
+        feed_source(
+            &mut worker,
+            &fence,
+            Provider::Kalshi,
+            book_frame(seq, ticker, r#"[["0.36","1"]]"#, r#"[["0.64","1"]]"#).as_bytes(),
+            0,
+            None,
+        )
+        .unwrap();
+    }
+    let before = worker.snapshot(0).unwrap();
+    let old = worker.tokens();
+    feed_source(
+        &mut worker,
+        &fence,
+        Provider::Kalshi,
+        book_frame(4, "KXBTC15M-0", "[]", "[]").as_bytes(),
+        1,
+        None,
+    )
+    .unwrap();
+    assert!(!before.stream_current(Stream::Book));
+    assert!(before.stream_current(Stream::Brti));
+    assert!(fence.current(fence.token()));
+    assert_eq!(
+        worker.tokens()[Stream::Brti as usize],
+        old[Stream::Brti as usize]
+    );
+    assert_eq!(
+        feed_source(
+            &mut worker,
+            &fence,
+            Provider::Kalshi,
+            book_frame(5, "KXBTC15M-0", "[]", "[]").as_bytes(),
+            1,
+            Some(old)
+        ),
+        Err(Failure::Stopped)
+    );
+    for (seq, ticker) in [(6, "KXBTC15M-0"), (7, "KXBTC15M-1")] {
+        feed_source(
+            &mut worker,
+            &fence,
+            Provider::Kalshi,
+            book_frame(seq, ticker, r#"[["0.36","1"]]"#, r#"[["0.64","1"]]"#).as_bytes(),
+            2,
+            None,
+        )
+        .unwrap();
+        let initialized: Vec<_> = worker
+            .state
+            .snapshot(2)
+            .unwrap()
+            .bindings
+            .into_iter()
+            .filter(|b| b.requirement.field == "buyable_ask")
+            .collect();
+        assert_eq!(
+            initialized.iter().filter(|b| b.initialized).count(),
+            if seq == 6 { 2 } else { 4 }
+        );
+        assert!(initialized.iter().all(|b| !b.usable));
+    }
+    let before_bad = worker.snapshot(2).unwrap();
+    assert_eq!(feed_source(&mut worker,&fence,Provider::Kalshi,br#"{"type":"cfbenchmarks_value","sid":2,"seq":3,"msg":{"index_id":"BRTI","data":"{\"id\":\"ETHUSD_RTI\",\"time\":2,\"value\":\"1\"}"}}"#,3,None),Err(Failure::Protocol));
+    assert!(fence.current(fence.token()));
+    assert!(before_bad.stream_current(Stream::Book));
+    assert!(!before_bad.stream_current(Stream::Brti));
+    // An observed unsubscribe completion belongs to the same subscription sequence.
+    feed_source(
+        &mut worker,
+        &fence,
+        Provider::Kalshi,
+        br#"{"type":"unsubscribed","id":1,"sid":2,"seq":4}"#,
+        3,
+        None,
+    )
+    .unwrap();
+    let old = worker.snapshot(3).unwrap();
+    assert_eq!(
+        feed_source(&mut worker, &fence, Provider::Kalshi, b"{", 4, None),
+        Err(Failure::Protocol)
+    );
+    assert!(!old.stream_current(Stream::Brti));
+    assert!(!fence.current(fence.token()));
+}
+
+#[tokio::test]
+async fn discovery_uses_six_then_four_fixed_gets_and_worker_rejects_obsolete_parse() {
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let transport = transport::Transport::controlled(listener.local_addr().unwrap());
+    let row = |id: &str, open: &str, close: &str| {
+        format!(
+            r#"{{"ticker":"KXBTC15M-{id}","event_ticker":"KXBTC15M-E","open_time":"1970-01-01T{open}Z","close_time":"1970-01-01T{close}Z","status":"active"}}"#
+        )
+    };
+    let m = row("M", "00:00:00", "00:15:00");
+    let n = row("N", "00:15:00", "00:30:00");
+    let page1 = format!(r#"{{"markets":[{m}],"cursor":"opaque+/="}}"#);
+    let page2 = format!(r#"{{"markets":[{n}],"cursor":""}}"#);
+    let detail_m = format!(r#"{{"market":{m}}}"#);
+    let detail_n = format!(r#"{{"market":{n}}}"#);
+    let peer = tokio::spawn(async move {
+        let mut paths = Vec::new();
+        for body in [
+            r#"{"exchange_active":true}"#.to_owned(),
+            r#"{"series":{"ticker":"KXBTC15M"}}"#.to_owned(),
+            page1.clone(),
+            page2.clone(),
+            detail_m.clone(),
+            detail_n.clone(),
+            page1,
+            page2,
+            detail_m,
+            detail_n,
+        ] {
+            let (mut socket, _) = listener.accept().await.unwrap();
+            let mut request = Vec::new();
+            let mut chunk = [0; 1024];
+            while !request.ends_with(b"\r\n\r\n") {
+                let n = socket.read(&mut chunk).await.unwrap();
+                assert!(n > 0);
+                request.extend_from_slice(&chunk[..n]);
+                assert!(request.len() < 8192);
+            }
+            let path = std::str::from_utf8(&request)
+                .unwrap()
+                .lines()
+                .next()
+                .unwrap()
+                .split_whitespace()
+                .nth(1)
+                .unwrap()
+                .to_owned();
+            paths.push(path);
+            socket
+                .write_all(
+                    format!(
+                        "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                        body.len()
+                    )
+                    .as_bytes(),
+                )
+                .await
+                .unwrap();
+        }
+        paths
+    });
+    let worker =
+        SourceWorker::prepare(&all_source_strategy(), &[], transport.memory().clone()).unwrap();
+    let mut owner = Coordinator::new();
+    let mut handle = owner.start_sources(worker).unwrap();
+    while handle.latest.borrow().is_none() {
+        handle.latest.changed().await.unwrap();
+    }
+    let token = handle
+        .latest
+        .borrow()
+        .as_ref()
+        .unwrap()
+        .snapshot()
+        .unwrap()
+        .streams
+        .iter()
+        .find(|(s, _, _)| *s == metten_engine::sources::Stream::Metadata)
+        .unwrap()
+        .2;
+    let (_stop, mut stop) = watch::channel(false);
+    let fence = Fence::new();
+    for startup in [true, false] {
+        let result = tokio::time::timeout(
+            Duration::from_secs(12),
+            discovery::pair(
+                &transport,
+                &mut stop,
+                &fence,
+                1,
+                0,
+                startup,
+                &handle.command,
+                token,
+            ),
+        )
+        .await
+        .unwrap()
+        .unwrap();
+        assert_eq!(result.markets.len(), 2);
+        assert_eq!(result.markets[1].open_ms, 900000);
+    }
+    assert_eq!(transport.attempts(Provider::Kalshi).unwrap(), [10, 0, 0]);
+    let paths = peer.await.unwrap();
+    assert_eq!(paths.len(), 10);
+    assert!(paths[3].ends_with("cursor=opaque%2B%2F%3D"));
+    assert_eq!(&paths[2..6], &paths[6..10]);
+    handle.schedule.send_replace(Some(ScheduleLoss {
+        epoch: Some(0),
+        reason: metten_engine::sources::Unavailable::MetadataChanged,
+        terminal: false,
+    }));
+    tokio::time::timeout(SHUTDOWN, async {
+        loop {
+            let changed = handle
+                .latest
+                .borrow()
+                .as_ref()
+                .and_then(|v| v.snapshot().ok())
+                .is_some_and(|v| {
+                    v.streams.iter().any(|(s, _, t)| {
+                        *s == metten_engine::sources::Stream::Metadata && *t != token
+                    })
+                });
+            if changed {
+                break;
+            }
+            handle.latest.changed().await.unwrap();
+        }
+    })
+    .await
+    .unwrap();
+    let (reply, receive) = tokio::sync::oneshot::channel();
+    handle
+        .command
+        .send(SourceCommand::Metadata {
+            route: Route::Series,
+            bytes: transport
+                .memory()
+                .copy(br#"{"series":{"ticker":"KXBTC15M"}}"#)
+                .unwrap(),
+            epoch: 0,
+            now: 1,
+            token,
+            reply,
+        })
+        .await
+        .unwrap();
+    assert!(matches!(receive.await.unwrap(), Err(Failure::Stopped)));
+    owner.shutdown(Instant::now() + SHUTDOWN).await.unwrap();
+    assert!(owner.finished());
+}
+
+#[tokio::test]
+async fn three_owned_provider_tasks_send_seven_initial_controls_without_extra_connections() {
+    use futures_util::{SinkExt, StreamExt};
+    use tokio_tungstenite::tungstenite::Message;
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let transport = Arc::new(transport::Transport::controlled(
+        listener.local_addr().unwrap(),
+    ));
+    let (log, mut logs) = mpsc::channel(8);
+    let peer = tokio::spawn(async move {
+        let mut children = tokio::task::JoinSet::new();
+        for _ in 0..4 {
+            let (mut socket, _) = listener.accept().await.unwrap();
+            let log = log.clone();
+            children.spawn(async move {
+                let mut peek=[0;4096];let n=socket.peek(&mut peek).await.unwrap();
+                if !std::str::from_utf8(&peek[..n]).unwrap().starts_with("GET /trade-api/ws/v2 ") {
+                    use tokio::io::AsyncWriteExt;
+                    socket.write_all(b"HTTP/1.1 404 Not Found\r\nContent-Length: 2\r\nConnection: close\r\n\r\n{}").await.unwrap();
+                    return;
+                }
+                let mut socket=tokio_tungstenite::accept_async(socket).await.unwrap();
+                while let Some(Ok(Message::Text(text)))=socket.next().await {
+                    let value:serde_json::Value=serde_json::from_str(&text).unwrap();
+                    log.send(value.clone()).await.unwrap();
+                    if value["cmd"]=="subscribe" {
+                        let channel=value["params"]["channels"][0].as_str().unwrap();
+                        let sid=match channel {"orderbook_delta"=>1,"trade"=>2,"cfbenchmarks_value"=>3,"market_lifecycle_v2"=>4,_=>panic!("unexpected channel")};
+                        socket.send(Message::Text(format!(r#"{{"type":"subscribed","msg":{{"sid":{sid},"channel":"{channel}"}}}}"#).into())).await.unwrap();
+                    }
+                }
+            });
+        }
+        while let Some(result) = children.join_next().await {
+            result.unwrap();
+        }
+        assert!(
+            tokio::time::timeout(Duration::from_millis(20), listener.accept())
+                .await
+                .is_err()
+        );
+    });
+    let worker = SourceWorker::prepare(
+        &all_source_strategy(),
+        &source_markets(),
+        transport.memory().clone(),
+    )
+    .unwrap();
+    let mut owner = Coordinator::new();
+    let mut handle = owner.start_sources(worker).unwrap();
+    for provider in [Provider::Kalshi, Provider::Coinbase, Provider::Kraken] {
+        owner
+            .start_provider(
+                provider,
+                transport.clone(),
+                &mut handle,
+                if provider == Provider::Kalshi {
+                    Some(("synthetic".into(), signing::Key::parse(&ed_pem()).unwrap()))
+                } else {
+                    None
+                },
+            )
+            .unwrap();
+    }
+    let controls = tokio::time::timeout(Duration::from_secs(5), async {
+        let mut values = Vec::new();
+        for _ in 0..7 {
+            values.push(logs.recv().await.unwrap());
+        }
+        values
+    })
+    .await
+    .unwrap();
+    assert_eq!(
+        controls.iter().filter(|c| c["cmd"] == "subscribe").count(),
+        4
+    );
+    assert_eq!(
+        controls
+            .iter()
+            .filter(|c| c["params"]["action"] == "indexlist")
+            .count(),
+        1
+    );
+    assert_eq!(
+        controls.iter().filter(|c| c["type"] == "subscribe").count(),
+        1
+    );
+    assert_eq!(
+        controls
+            .iter()
+            .filter(|c| c["method"] == "subscribe")
+            .count(),
+        1
+    );
+    for provider in [Provider::Kalshi, Provider::Coinbase, Provider::Kraken] {
+        assert_eq!(transport.attempts(provider).unwrap()[1], 1);
+    }
+    owner.shutdown(Instant::now() + SHUTDOWN).await.unwrap();
+    assert!(owner.finished());
+    peer.await.unwrap();
+}
+
+#[tokio::test]
+async fn unpolled_owned_service_drop_revokes_its_session_and_releases_the_socket() {
+    use futures_util::StreamExt;
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    let peer = tokio::spawn(async move {
+        let (socket, _) = listener.accept().await.unwrap();
+        let mut socket = tokio_tungstenite::accept_async(socket).await.unwrap();
+        assert!(socket.next().await.is_none_or(|m| m.is_err()));
+    });
+    let fence = Fence::new();
+    let connection = transport::local_connection(address, Provider::Coinbase, fence.clone()).await;
+    let transport = transport::Transport::new(Environment::Demo).unwrap();
+    let (_tx, mut controls) = mpsc::channel(1);
+    let (tx, _) = intake();
+    let (_stop, stop) = watch::channel(false);
+    let source =
+        SourceWorker::prepare(&all_source_strategy(), &[], transport.memory().clone()).unwrap();
+    let future = transport.serve(connection, &mut controls, tx, source.tokens(), stop, None);
+    drop(future);
+    assert!(!fence.current(fence.token()));
+    tokio::time::timeout(SHUTDOWN, peer).await.unwrap().unwrap();
+}
+
+#[tokio::test]
+async fn explicit_recovery_reuses_owned_control_receiver_only_after_join() {
+    use futures_util::{SinkExt, StreamExt};
+    use tokio_tungstenite::tungstenite::Message;
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let transport = Arc::new(transport::Transport::controlled(
+        listener.local_addr().unwrap(),
+    ));
+    let peer = tokio::spawn(async move {
+        for id in [10, 11] {
+            let (socket, _) = listener.accept().await.unwrap();
+            let mut socket = tokio_tungstenite::accept_async(socket).await.unwrap();
+            assert!(socket.next().await.unwrap().unwrap().is_text());
+            socket.send(Message::Text(format!(r#"{{"type":"last_match","product_id":"BTC-USD","trade_id":{id},"price":"68000.{id}","time":"t"}}"#).into())).await.unwrap();
+            let _ = socket.next().await;
+        }
+    });
+    let mut owner = Coordinator::new();
+    let worker =
+        SourceWorker::prepare(&all_source_strategy(), &[], transport.memory().clone()).unwrap();
+    let mut handle = owner.start_sources(worker).unwrap();
+    for id in [10, 11] {
+        owner
+            .start_provider(Provider::Coinbase, transport.clone(), &mut handle, None)
+            .unwrap();
+        tokio::time::timeout(SHUTDOWN, async {
+            loop {
+                let ready = handle
+                    .latest
+                    .borrow()
+                    .as_ref()
+                    .and_then(|v| v.snapshot().ok())
+                    .is_some_and(|s| {
+                        s.bindings.iter().any(|b| {
+                            b.provider_identity.as_deref()
+                                == Some(if id == 10 { "10" } else { "11" })
+                                && b.initialized
+                        })
+                    });
+                if ready {
+                    break;
+                }
+                handle.latest.changed().await.unwrap();
+            }
+        })
+        .await
+        .unwrap();
+        let old = handle.latest.borrow().clone().unwrap();
+        owner
+            .stop_provider(Provider::Coinbase, Instant::now() + SHUTDOWN)
+            .await
+            .unwrap();
+        assert!(!old.stream_current(metten_engine::sources::Stream::Coinbase));
+        owner.recover_provider(Provider::Coinbase, false).unwrap();
+    }
+    assert_eq!(transport.attempts(Provider::Coinbase).unwrap(), [0, 2, 2]);
+    owner.shutdown(Instant::now() + SHUTDOWN).await.unwrap();
+    peer.await.unwrap();
+}
+
+#[test]
+fn repeated_native_rollover_retains_two_books_and_reuses_shared_subscription() {
+    check_native_rollover(0);
+}
+
+#[test]
+fn prepared_rollover_crosses_opening_between_worker_ticks_once_at_scheduled_time() {
+    check_native_rollover(1);
+}
+
+#[test]
+fn missed_opening_never_backdates_late_readiness_or_revoked_preparation() {
+    use metten_engine::{sources::*, strategy::EvidenceChange};
+    for rebuild in [false, true] {
+        let (mut worker, fence) = prepared_rollover_worker();
+        worker.advance(899999, |_| Ok(())).unwrap();
+        worker
+            .state
+            .invalidate(Scope::Market, Unavailable::MetadataChanged, 899999, None)
+            .unwrap();
+        if rebuild {
+            worker
+                .install_markets(
+                    &source_markets()[1..],
+                    worker.tokens()[Stream::Metadata as usize],
+                    900001,
+                    |_| Ok(()),
+                )
+                .unwrap();
+            feed_source(
+                &mut worker,
+                &fence,
+                super::Provider::Kalshi,
+                book_frame(3, "KXBTC15M-1", r#"[["0.36","1"]]"#, r#"[["0.64","1"]]"#).as_bytes(),
+                900001,
+                None,
+            )
+            .unwrap();
+        }
+        let mut entries = 0;
+        worker
+            .advance(900002, |effect| {
+                entries += effect
+                    .batch
+                    .transactions
+                    .iter()
+                    .flat_map(|t| &t.changes)
+                    .filter(|c| matches!(c, EvidenceChange::MarketBoundary { .. }))
+                    .count();
+                Ok(())
+            })
+            .unwrap();
+        assert_eq!(entries, 0);
+        let view = worker.state.snapshot(900002).unwrap();
+        assert_eq!(
+            view.current_market.as_deref(),
+            rebuild.then_some("KXBTC15M-1")
+        );
+        assert_eq!(view.markets[0].preparation == Preparation::Ready, rebuild);
+    }
+}
+
+fn prepared_rollover_worker() -> (SourceWorker, Fence) {
+    use metten_engine::{sources::*, strategy::*};
+    let strategy =
+        ValidatedStrategy::parse(include_str!("../../../examples/learning.json")).unwrap();
+    let memory = memory::Memory::default();
+    let prepared = SourceWorker::prepare(&strategy, &source_markets(), memory.clone()).unwrap();
+    let bindings: Vec<_> = prepared
+        .state
+        .snapshot(0)
+        .unwrap()
+        .bindings
+        .into_iter()
+        .map(|b| b.binding)
+        .collect();
+    drop(prepared);
+    let caps: Vec<_> = bindings
+        .iter()
+        .map(|b| {
+            (
+                b.binding_id,
+                Capabilities {
+                    current: None,
+                    observations: None,
+                    history: None,
+                },
+            )
+        })
+        .collect();
+    let state = SourceState::new(&strategy, &source_markets(), &bindings, &caps).unwrap();
+    let mut worker = SourceWorker::new(state, memory).unwrap();
+    worker.lease = Some(10_000_000);
+    let fence = Fence::new();
+    worker
+        .connection(
+            super::Provider::Kalshi,
+            worker.tokens()[0],
+            Connection::Open,
+            0,
+        )
+        .unwrap();
+    feed_source(
+        &mut worker,
+        &fence,
+        super::Provider::Kalshi,
+        br#"{"type":"subscribed","msg":{"sid":1,"channel":"orderbook_delta"}}"#,
+        0,
+        None,
+    )
+    .unwrap();
+    worker
+        .install_markets(
+            &source_markets(),
+            worker.tokens()[Stream::Metadata as usize],
+            0,
+            |_| Ok(()),
+        )
+        .unwrap();
+    for (seq, id) in [(1, 0), (2, 1)] {
+        feed_source(
+            &mut worker,
+            &fence,
+            super::Provider::Kalshi,
+            book_frame(
+                seq,
+                &format!("KXBTC15M-{id}"),
+                r#"[["0.36","1"]]"#,
+                r#"[["0.64","1"]]"#,
+            )
+            .as_bytes(),
+            0,
+            None,
+        )
+        .unwrap();
+    }
+    (worker, fence)
+}
+
+fn check_native_rollover(delay: u64) {
+    use metten_engine::{sources::*, strategy::*};
+    let (mut worker, fence) = prepared_rollover_worker();
+    let (controls, mut requests) = mpsc::channel(7);
+    worker.controls[0] = Some(controls);
+    let mut seq = 2;
+    for id in 1..=3 {
+        let opening = id * 900000;
+        let at = opening + delay;
+        worker.advance(opening - 1, |_| Ok(())).unwrap();
+        let before = worker.tokens();
+        let mut entries = 0;
+        worker
+            .advance(at, |effect| {
+                if effect.batch.transactions.iter().any(|t| {
+                    t.changes
+                        .iter()
+                        .any(|c| matches!(c, EvidenceChange::MarketBoundary { .. }))
+                }) {
+                    assert_eq!(effect.batch.target_ms, opening);
+                    assert!(effect.batch.transactions.iter().all(|t| t.at_ms == opening));
+                }
+                entries += effect
+                    .batch
+                    .transactions
+                    .iter()
+                    .flat_map(|t| &t.changes)
+                    .filter(|c| matches!(c, EvidenceChange::MarketBoundary { .. }))
+                    .count();
+                Ok(())
+            })
+            .unwrap();
+        assert_eq!(entries, 1);
+        assert_eq!(
+            worker.state.snapshot(at).unwrap().current_market.as_deref(),
+            Some(format!("KXBTC15M-{id}").as_str())
+        );
+        assert!(matches!(
+            requests.try_recv().unwrap(),
+            Control::KalshiBookUpdate {
+                action: BookAction::Delete,
+                ..
+            }
+        ));
+        assert!(requests.try_recv().is_err());
+        let next = MarketDescriptor {
+            series_id: "KXBTC15M".into(),
+            market_id: format!("KXBTC15M-{}", id + 1),
+            contract_id: format!("contract-{}", id + 1),
+            open_ms: (opening + 900000) as i64,
+            close_ms: (opening + 1800000) as i64,
+        };
+        worker
+            .install_markets(
+                std::slice::from_ref(&next),
+                worker.tokens()[Stream::Metadata as usize],
+                at,
+                |_| Ok(()),
+            )
+            .unwrap();
+        assert!(matches!(
+            requests.try_recv().unwrap(),
+            Control::KalshiBookUpdate {
+                sid: 1,
+                action: BookAction::Add,
+                ..
+            }
+        ));
+        seq += 1;
+        feed_source(
+            &mut worker,
+            &fence,
+            super::Provider::Kalshi,
+            book_frame(
+                seq,
+                &next.market_id,
+                r#"[["0.36","1"]]"#,
+                r#"[["0.64","1"]]"#,
+            )
+            .as_bytes(),
+            at,
+            None,
+        )
+        .unwrap();
+        let snapshot = worker.state.snapshot(at).unwrap();
+        assert_eq!(snapshot.markets.len(), 2);
+        assert_eq!(snapshot.bindings.len(), 4);
+        assert_eq!(worker.tokens(), before);
+        assert!(fence.current(fence.token()));
+        let mut duplicates = 0;
+        worker
+            .advance(at, |e| {
+                duplicates += e
+                    .batch
+                    .transactions
+                    .iter()
+                    .flat_map(|t| &t.changes)
+                    .filter(|c| matches!(c, EvidenceChange::MarketBoundary { .. }))
+                    .count();
+                Ok(())
+            })
+            .unwrap();
+        assert_eq!(duplicates, 0);
+    }
+}
+
+#[tokio::test]
+async fn same_socket_recovery_discards_in_progress_old_receive_then_restores_both_books() {
+    use futures_util::{SinkExt, StreamExt};
+    use tokio_tungstenite::tungstenite::Message;
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    let transport = Arc::new(transport::Transport::new(Environment::Demo).unwrap());
+    let (step, mut steps) = mpsc::channel(1);
+    let peer = tokio::spawn(async move {
+        let (socket, _) = listener.accept().await.unwrap();
+        let mut socket = tokio_tungstenite::accept_async(socket).await.unwrap();
+        assert!(socket.next().await.unwrap().unwrap().is_text());
+        for frame in [
+            r#"{"type":"subscribed","msg":{"sid":1,"channel":"orderbook_delta"}}"#.to_owned(),
+            book_frame(1, "KXBTC15M-0", r#"[["0.36","1"]]"#, r#"[["0.64","1"]]"#),
+            book_frame(2, "KXBTC15M-1", r#"[["0.36","1"]]"#, r#"[["0.64","1"]]"#),
+            book_frame(4, "KXBTC15M-0", "[]", "[]"),
+        ] {
+            socket.send(Message::Text(frame.into())).await.unwrap();
+            steps.recv().await.unwrap();
+        }
+        let recovery = socket.next().await.unwrap().unwrap().into_text().unwrap();
+        assert!(recovery.contains("get_snapshot"));
+        // This first response is returned by the receive already pending before recovery began.
+        socket
+            .send(Message::Text(
+                book_frame(5, "KXBTC15M-0", r#"[["0.36","1"]]"#, r#"[["0.64","1"]]"#).into(),
+            ))
+            .await
+            .unwrap();
+        steps.recv().await.unwrap();
+        let repeated = socket.next().await.unwrap().unwrap().into_text().unwrap();
+        assert!(repeated.contains("get_snapshot"));
+        for (seq, id) in [(6, 0), (7, 1)] {
+            socket
+                .send(Message::Text(
+                    book_frame(
+                        seq,
+                        &format!("KXBTC15M-{id}"),
+                        r#"[["0.36","1"]]"#,
+                        r#"[["0.64","1"]]"#,
+                    )
+                    .into(),
+                ))
+                .await
+                .unwrap();
+            steps.recv().await.unwrap();
+        }
+        let _ = socket.next().await;
+    });
+    let mut worker = SourceWorker::prepare(
+        &all_source_strategy(),
+        &source_markets(),
+        transport.memory().clone(),
+    )
+    .unwrap();
+    worker
+        .connection(
+            Provider::Kalshi,
+            worker.tokens()[0],
+            metten_engine::sources::Connection::Open,
+            0,
+        )
+        .unwrap();
+    let tokens = worker.tokens();
+    let fence = Fence::new();
+    let connection = transport::local_connection(address, Provider::Kalshi, fence.clone()).await;
+    let (controls, mut controls_rx) = mpsc::channel(7);
+    worker.controls[0] = Some(controls.clone());
+    controls
+        .send(Control::KalshiSubscribe {
+            id: 1,
+            channel: Channel::Book,
+            markets: source_markets().into_iter().map(|m| m.market_id).collect(),
+        })
+        .await
+        .unwrap();
+    let (intake, mut receipts) = intake();
+    let (stop, stopped) = watch::channel(false);
+    let progress = watch::channel(transport::Progress::new()).0;
+    let service_transport = transport.clone();
+    let service = tokio::spawn(async move {
+        service_transport
+            .serve(
+                connection,
+                &mut controls_rx,
+                intake,
+                tokens,
+                stopped,
+                Some(progress),
+            )
+            .await
+    });
+    for i in 0..7 {
+        let mut receipt = tokio::time::timeout(SHUTDOWN, receipts.recv())
+            .await
+            .unwrap()
+            .unwrap();
+        receipt.receipt_ms = Some(0);
+        let result = worker.process(receipt, 0, 0, |_| Ok(()));
+        if i == 4 {
+            assert_eq!(result, Err(Failure::Stopped))
+        } else {
+            result.unwrap();
+        }
+        step.send(()).await.unwrap();
+    }
+    assert!(fence.current(fence.token()));
+    let initialized = worker
+        .state
+        .snapshot(0)
+        .unwrap()
+        .bindings
+        .into_iter()
+        .filter(|b| b.requirement.field == "buyable_ask" && b.initialized)
+        .count();
+    assert_eq!(initialized, 4);
+    assert_eq!(transport.attempts(Provider::Kalshi).unwrap(), [0, 0, 3]);
+    stop.send_replace(true);
+    assert_eq!(
+        tokio::time::timeout(SHUTDOWN, service)
+            .await
+            .unwrap()
+            .unwrap(),
+        Err(Failure::Stopped)
+    );
+    peer.await.unwrap();
+}
+
+#[tokio::test]
+async fn source_context_charge_lives_until_its_retained_control_handle_is_dropped() {
+    let memory = memory::Memory::default();
+    let worker = SourceWorker::prepare(&all_source_strategy(), &[], memory.clone()).unwrap();
+    let mut owner = Coordinator::new();
+    let mut handle = owner.start_sources(worker).unwrap();
+    while handle.latest.borrow().is_none() {
+        handle.latest.changed().await.unwrap();
+    }
+    owner.shutdown(Instant::now() + SHUTDOWN).await.unwrap();
+    assert!(owner.finished());
+    assert!(memory.used() >= 64 * 1024);
+    drop(handle);
+    assert_eq!(memory.used(), 0);
+}
+
+#[test]
+fn metadata_revocation_discards_book_baseline_before_new_generation_deltas() {
+    use metten_engine::sources::{Connection, Stream};
+    let mut worker = SourceWorker::prepare(
+        &all_source_strategy(),
+        &source_markets(),
+        memory::Memory::default(),
+    )
+    .unwrap();
+    let fence = Fence::new();
+    worker
+        .connection(Provider::Kalshi, worker.tokens()[0], Connection::Open, 0)
+        .unwrap();
+    for (sid, channel) in [(1, "orderbook_delta"), (4, "market_lifecycle_v2")] {
+        feed_source(
+            &mut worker,
+            &fence,
+            Provider::Kalshi,
+            format!(r#"{{"type":"subscribed","msg":{{"sid":{sid},"channel":"{channel}"}}}}"#)
+                .as_bytes(),
+            0,
+            None,
+        )
+        .unwrap();
+    }
+    feed_source(
+        &mut worker,
+        &fence,
+        Provider::Kalshi,
+        book_frame(1, "KXBTC15M-0", r#"[["0.36","1"]]"#, r#"[["0.64","1"]]"#).as_bytes(),
+        0,
+        None,
+    )
+    .unwrap();
+    let before = worker.snapshot(0).unwrap();
+    feed_source(
+        &mut worker,
+        &fence,
+        Provider::Kalshi,
+        br#"{"type":"market_lifecycle_v2","sid":4,"seq":1,"msg":{"market_ticker":"KXBTC15M-0"}}"#,
+        0,
+        None,
+    )
+    .unwrap();
+    assert!(!before.stream_current(Stream::Book));
+    assert!(!before.stream_current(Stream::Metadata));
+    assert!(before.stream_current(Stream::Brti));
+    feed_source(&mut worker,&fence,Provider::Kalshi,br#"{"type":"orderbook_delta","sid":1,"seq":2,"msg":{"market_ticker":"KXBTC15M-0","side":"yes","price_dollars":"0.36","delta_fp":"1"}}"#,0,None).unwrap();
+    assert!(
+        worker
+            .state
+            .snapshot(0)
+            .unwrap()
+            .bindings
+            .iter()
+            .filter(|b| b.requirement.field == "buyable_ask")
+            .all(|b| !b.initialized)
+    );
+    feed_source(
+        &mut worker,
+        &fence,
+        Provider::Kalshi,
+        book_frame(3, "KXBTC15M-0", r#"[["0.40","1"]]"#, r#"[["0.60","1"]]"#).as_bytes(),
+        0,
+        None,
+    )
+    .unwrap();
+    assert_eq!(
+        worker
+            .state
+            .snapshot(0)
+            .unwrap()
+            .bindings
+            .iter()
+            .filter(|b| b.requirement.field == "buyable_ask" && b.initialized)
+            .count(),
+        2
+    );
+}
+
+#[test]
+fn current_next_details_are_scoped_and_retired_metadata_cannot_reopen_a_slot() {
+    use metten_engine::sources::{Connection, Stream};
+    let mut worker = SourceWorker::prepare(
+        &all_source_strategy(),
+        &source_markets(),
+        memory::Memory::default(),
+    )
+    .unwrap();
+    let fence = Fence::new();
+    worker
+        .connection(Provider::Kalshi, worker.tokens()[0], Connection::Open, 0)
+        .unwrap();
+    feed_source(
+        &mut worker,
+        &fence,
+        Provider::Kalshi,
+        br#"{"type":"subscribed","msg":{"sid":1,"channel":"orderbook_delta"}}"#,
+        0,
+        None,
+    )
+    .unwrap();
+    for (seq, id, qty) in [(1, 0, "2"), (2, 1, "7")] {
+        let no = format!(r#"[["0.64","{qty}"]]"#);
+        feed_source(
+            &mut worker,
+            &fence,
+            Provider::Kalshi,
+            book_frame(seq, &format!("KXBTC15M-{id}"), r#"[["0.36","1"]]"#, &no).as_bytes(),
+            0,
+            None,
+        )
+        .unwrap();
+    }
+    let before = worker.snapshot(0).unwrap();
+    for (id, want) in [(0, 2_000_000), (1, 7_000_000)] {
+        let Some(wire::Details::Book { quantities, .. }) = before
+            .details(Stream::Book, Some(&format!("KXBTC15M-{id}")))
+            .unwrap()
+        else {
+            panic!("book details")
+        };
+        assert_eq!(quantities[2].unwrap().millionths(), want);
+    }
+    assert!(matches!(
+        before.details(Stream::Book, None),
+        Err(Failure::InvalidRequest)
+    ));
+    worker.advance(900000, |_| Ok(())).unwrap();
+    assert!(!before.stream_current(Stream::Book));
+    assert_eq!(
+        worker.install_markets(
+            &source_markets(),
+            worker.tokens()[Stream::Metadata as usize],
+            900000,
+            |_| Ok(())
+        ),
+        Err(Failure::Stopped)
+    );
+    let now = worker.snapshot(900000).unwrap();
+    assert!(
+        now.details(Stream::Book, Some("KXBTC15M-0"))
+            .unwrap()
+            .is_none()
+    );
+    assert!(
+        now.details(Stream::Book, Some("KXBTC15M-1"))
+            .unwrap()
+            .is_some()
+    );
+    assert_eq!(now.snapshot().unwrap().markets.len(), 1);
+}
+
+#[test]
+fn native_stop_revokes_a_pending_controlled_consumer_before_more_ordinary_work() {
+    use metten_engine::strategy::*;
+    let strategy =
+        ValidatedStrategy::parse(include_str!("../../../examples/learning.json")).unwrap();
+    let markets = source_markets();
+    let memory = memory::Memory::default();
+    let mut worker = SourceWorker::prepare(&strategy, &markets, memory.clone()).unwrap();
+    let bindings: Vec<_> = worker
+        .state
+        .snapshot(0)
+        .unwrap()
+        .bindings
+        .into_iter()
+        .map(|b| b.binding)
+        .collect();
+    let ids: Vec<_> = bindings.iter().map(|b| b.binding_id).collect();
+    let mut evaluator = Evaluator::new(
+        strategy,
+        RunContext {
+            strategy_version: "controlled".into(),
+            run_id: "pending-stop".into(),
+            go_time: "controlled".into(),
+            series_id: "KXBTC15M".into(),
+            markets,
+            bindings,
+        },
+    )
+    .unwrap();
+    worker
+        .connection(
+            Provider::Kalshi,
+            worker.tokens()[0],
+            metten_engine::sources::Connection::Open,
+            0,
+        )
+        .unwrap();
+    let fence = Fence::new();
+    feed_source(
+        &mut worker,
+        &fence,
+        Provider::Kalshi,
+        br#"{"type":"subscribed","msg":{"sid":1,"channel":"orderbook_delta"}}"#,
+        0,
+        None,
+    )
+    .unwrap();
+    let bytes = book_frame(1, "KXBTC15M-0", r#"[["0.36","1"]]"#, r#"[["0.64","1"]]"#);
+    let mut item = Intake::new(
+        Provider::Kalshi,
+        &fence,
+        memory.copy(bytes.as_bytes()).unwrap(),
+        Instant::now(),
+    );
+    item.receipt_ms = Some(0);
+    item.source_tokens = Some(worker.tokens());
+    worker
+        .process(item, 0, 0, |effect| {
+            evaluator.begin(effect.batch).unwrap();
+            Ok(())
+        })
+        .unwrap();
+    let stamp = worker.state.stamp(&ids).unwrap();
+    let view = worker.snapshot(0).unwrap();
+    let tokens = worker.tokens();
+    fence.revoke();
+    assert!(!view.stream_current(metten_engine::sources::Stream::Book));
+    let mut late = Intake::new(
+        Provider::Kalshi,
+        &fence,
+        memory.copy(bytes.as_bytes()).unwrap(),
+        Instant::now(),
+    );
+    late.source_tokens = Some(tokens);
+    late.receipt_ms = Some(0);
+    assert_eq!(
+        worker.process(late, 0, 0, |_| panic!(
+            "no second batch during pending Stop"
+        )),
+        Err(Failure::Stopped)
+    );
+    worker.observe_stops(0).unwrap();
+    assert!(!worker.state.is_current(&stamp));
+    assert!(matches!(
+        evaluator.process_slice(SliceControl::Stop, None),
+        SliceResult::Stopped
+    ));
+    assert!(matches!(
+        evaluator.process_slice(SliceControl::Continue, None),
+        SliceResult::Stopped
+    ));
+}
+
+#[tokio::test]
+async fn ping_burst_replies_do_not_wait_for_a_subscription_permit() {
+    use futures_util::{SinkExt, StreamExt};
+    use tokio_tungstenite::tungstenite::Message;
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let transport = Arc::new(transport::Transport::controlled(
+        listener.local_addr().unwrap(),
+    ));
+    let (observed, receive) = tokio::sync::oneshot::channel();
+    let peer = tokio::spawn(async move {
+        let (socket, _) = listener.accept().await.unwrap();
+        let mut socket = tokio_tungstenite::accept_async(socket).await.unwrap();
+        assert!(socket.next().await.unwrap().unwrap().is_text());
+        socket.send(Message::Ping(vec![1].into())).await.unwrap();
+        socket.send(Message::Ping(vec![2].into())).await.unwrap();
+        tokio::time::timeout(Duration::from_millis(250), async {
+            loop {
+                match socket.next().await.unwrap().unwrap() {
+                    Message::Pong(bytes) if bytes.as_ref() == [2] => break,
+                    Message::Pong(_) => (),
+                    other => panic!("pong must precede the next rate-limited control: {other:?}"),
+                }
+            }
+        })
+        .await
+        .unwrap();
+        observed.send(()).unwrap();
+        let _ = socket.next().await;
+    });
+    let fence = Fence::new();
+    let (_initial, mut initial) = watch::channel(false);
+    let connection = transport
+        .connect(
+            Provider::Coinbase,
+            None,
+            &mut initial,
+            Instant::now() + SHUTDOWN,
+            &fence,
+        )
+        .await
+        .unwrap();
+    let worker =
+        SourceWorker::prepare(&all_source_strategy(), &[], transport.memory().clone()).unwrap();
+    let tokens = worker.tokens();
+    let (controls, mut controls_rx) = mpsc::channel(2);
+    controls
+        .send(Control::Coinbase { subscribe: true })
+        .await
+        .unwrap();
+    controls
+        .send(Control::Coinbase { subscribe: false })
+        .await
+        .unwrap();
+    let (intake, _) = intake();
+    let (stop, stopped) = watch::channel(false);
+    let service_transport = transport.clone();
+    let service = tokio::spawn(async move {
+        service_transport
+            .serve(connection, &mut controls_rx, intake, tokens, stopped, None)
+            .await
+    });
+    tokio::time::timeout(SHUTDOWN, receive)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(transport.attempts(Provider::Coinbase).unwrap(), [0, 1, 1]);
+    stop.send_replace(true);
+    assert_eq!(
+        tokio::time::timeout(SHUTDOWN, service)
+            .await
+            .unwrap()
+            .unwrap(),
+        Err(Failure::Stopped)
+    );
+    peer.await.unwrap();
+}
+
+#[tokio::test]
+async fn delayed_handshake_subscribes_only_markets_still_retained_after_upgrade() {
+    use futures_util::StreamExt;
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let transport = Arc::new(transport::Transport::controlled(
+        listener.local_addr().unwrap(),
+    ));
+    let (accepted, accept) = tokio::sync::oneshot::channel();
+    let (release, released) = tokio::sync::oneshot::channel();
+    let (observed, received) = tokio::sync::oneshot::channel();
+    let peer = tokio::spawn(async move {
+        let (socket, _) = listener.accept().await.unwrap();
+        accepted.send(()).unwrap();
+        released.await.unwrap();
+        let mut socket = tokio_tungstenite::accept_async(socket).await.unwrap();
+        let command = socket.next().await.unwrap().unwrap();
+        let command: serde_json::Value = serde_json::from_str(command.to_text().unwrap()).unwrap();
+        assert_eq!(
+            command["params"]["channels"],
+            serde_json::json!(["orderbook_delta"])
+        );
+        assert_eq!(
+            command["params"]["market_tickers"],
+            serde_json::json!(["KXBTC15M-1"])
+        );
+        observed.send(()).unwrap();
+        while socket.next().await.is_some_and(|m| m.is_ok()) {}
+    });
+    let mut markets = source_markets();
+    for market in &mut markets {
+        market.open_ms -= 899_000;
+        market.close_ms -= 899_000;
+    }
+    let worker =
+        SourceWorker::prepare(&all_source_strategy(), &markets, transport.memory().clone())
+            .unwrap();
+    let mut owner = Coordinator::new();
+    let mut handle = owner.start_sources(worker).unwrap();
+    owner
+        .start_provider(
+            Provider::Kalshi,
+            transport.clone(),
+            &mut handle,
+            Some(("synthetic".into(), signing::Key::parse(&ed_pem()).unwrap())),
+        )
+        .unwrap();
+    tokio::time::timeout(SHUTDOWN, accept)
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(
+        handle
+            .latest
+            .borrow()
+            .as_ref()
+            .unwrap()
+            .snapshot()
+            .unwrap()
+            .markets
+            .iter()
+            .any(|m| m.descriptor.market_id == "KXBTC15M-0")
+    );
+    tokio::time::timeout(SHUTDOWN, async {
+        loop {
+            if handle.latest.borrow().as_ref().is_some_and(|v| {
+                v.snapshot().is_ok_and(|v| {
+                    v.markets
+                        .iter()
+                        .all(|m| m.descriptor.market_id != "KXBTC15M-0")
+                })
+            }) {
+                break;
+            }
+            handle.latest.changed().await.unwrap();
+        }
+    })
+    .await
+    .unwrap();
+    release.send(()).unwrap();
+    tokio::time::timeout(SHUTDOWN, received)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(transport.attempts(Provider::Kalshi).unwrap()[1], 1);
+    owner.shutdown(Instant::now() + SHUTDOWN).await.unwrap();
+    peer.await.unwrap();
 }

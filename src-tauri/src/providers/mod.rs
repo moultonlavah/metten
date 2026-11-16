@@ -1,11 +1,22 @@
-//! Native-only read transport. No decoder, account action, or renderer command.
-#![allow(dead_code)] // Step 4 consumes this foundation; no implicit connection at startup.
+//! Fixed native provider lifecycle, request policy and transport controls.
+#![allow(dead_code)] // Internal read-only context; command admission is deferred to step 5.
 pub mod budget;
+mod coinbase;
+mod discovery;
+mod kalshi;
+mod kraken;
 pub mod memory;
 pub mod signing;
+mod source;
 #[cfg(test)]
 mod tests;
 mod transport;
+use source::SourceCommand;
+#[cfg(test)]
+use source::{SOURCE_STREAMS, ScheduleLoss, source_envelope};
+#[allow(unused_imports)] // Explicit native setup surface; no startup or IPC caller yet.
+pub use source::{SourceHandle, SourceView, SourceWorker};
+mod wire;
 use std::sync::{
     Arc,
     atomic::{AtomicBool, AtomicU64, Ordering},
@@ -103,7 +114,9 @@ impl Route {
             } => {
                 if min_close_ts >= max_close_ts
                     || max_close_ts - min_close_ts > 3600
-                    || cursor.as_ref().is_some_and(|c| !machine(c))
+                    || cursor.as_ref().is_some_and(|c| {
+                        c.is_empty() || c.len() > 1024 || c.chars().any(char::is_control)
+                    })
                 {
                     return Err(Failure::InvalidRequest);
                 }
@@ -111,7 +124,16 @@ impl Route {
                     "/trade-api/v2/markets?series_ticker=KXBTC15M&min_close_ts={min_close_ts}&max_close_ts={max_close_ts}&limit=200{}",
                     cursor
                         .as_ref()
-                        .map(|c| format!("&cursor={c}"))
+                        .map(|c| format!(
+                            "&cursor={}",
+                            c.bytes()
+                                .map(|b| if b.is_ascii_alphanumeric() || b"-._~".contains(&b) {
+                                    (b as char).to_string()
+                                } else {
+                                    format!("%{b:02X}")
+                                })
+                                .collect::<String>()
+                        ))
                         .unwrap_or_default()
                 )
             }
@@ -129,6 +151,10 @@ pub struct Intake {
     pub generation: u64,
     pub bytes: memory::Bytes,
     pub received_at: Instant,
+    #[cfg(test)]
+    pub receipt_ms: Option<u64>,
+    pub source_tokens: Option<[metten_engine::sources::StreamToken; 6]>,
+    progress: Option<watch::Sender<transport::Progress>>,
     fence: Fence,
 }
 impl Intake {
@@ -143,6 +169,10 @@ impl Intake {
             generation: fence.token(),
             bytes,
             received_at,
+            #[cfg(test)]
+            receipt_ms: None,
+            source_tokens: None,
+            progress: None,
             fence: fence.clone(),
         }
     }
@@ -156,6 +186,8 @@ pub struct Fence {
     signal: watch::Sender<bool>,
     worker_stop: watch::Sender<bool>,
     rejected: Arc<AtomicU64>,
+    parent: Option<(Arc<Fence>, u64)>,
+    cause: Arc<std::sync::Mutex<Option<Failure>>>,
 }
 impl Fence {
     fn new() -> Self {
@@ -168,13 +200,29 @@ impl Fence {
             signal: watch::channel(false).0,
             worker_stop,
             rejected: Arc::new(AtomicU64::new(0)),
+            parent: None,
+            cause: Arc::new(std::sync::Mutex::new(None)),
         }
+    }
+    pub fn session(&self) -> Result<Self, Failure> {
+        if self.parent.is_some() || !self.current(self.token()) {
+            return Err(Failure::Stopped);
+        }
+        let mut session = Self::with_worker_stop(self.worker_stop.clone());
+        session.parent = Some((Arc::new(self.clone()), self.token()));
+        Ok(session)
     }
     pub fn token(&self) -> u64 {
         self.generation.load(Ordering::SeqCst)
     }
     pub fn current(&self, token: u64) -> bool {
-        !self.stopped.load(Ordering::SeqCst) && !*self.worker_stop.borrow() && token == self.token()
+        !self.stopped.load(Ordering::SeqCst)
+            && !*self.worker_stop.borrow()
+            && token == self.token()
+            && self
+                .parent
+                .as_ref()
+                .is_none_or(|(parent, generation)| parent.current(*generation))
     }
     pub fn rejected(&self) -> u64 {
         self.rejected.load(Ordering::SeqCst)
@@ -197,13 +245,30 @@ impl Fence {
             return Err(Failure::Stopped);
         }
         let mut worker_stop = self.worker_stop.subscribe();
-        let result = tokio::select! { biased; _=worker_stop.changed()=>Err(Failure::Stopped), result=bounded(&mut stopped, deadline, future)=>result };
+        let parent = async {
+            if let Some((parent, _)) = &self.parent {
+                let mut stop = parent.signal.subscribe();
+                if !parent.current(parent.token()) {
+                    return;
+                }
+                let _ = stop.changed().await;
+            } else {
+                std::future::pending::<()>().await;
+            }
+        };
+        let result = tokio::select! { biased; _=parent=>Err(Failure::Stopped), result=async { tokio::select! { biased; _=worker_stop.changed()=>Err(Failure::Stopped), result=bounded(&mut stopped, deadline, future)=>result } }=>result };
         if !self.current(self.token()) {
             self.reject();
             Err(Failure::Stopped)
         } else {
             result
         }
+    }
+    fn fail(&self, error: Failure) {
+        if let Ok(mut cause) = self.cause.lock() {
+            *cause = Some(error)
+        }
+        self.revoke()
     }
     pub fn revoke(&self) {
         self.stopped.store(true, Ordering::SeqCst);
@@ -439,22 +504,44 @@ pub async fn bounded<T>(
     }
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum BookAction {
+    Add,
+    Delete,
+    Snapshot,
+}
+#[derive(Clone, Copy, PartialEq, Eq)]
 pub enum Channel {
     Book,
     Trade,
     Brti,
     Lifecycle,
 }
+#[derive(Clone, PartialEq, Eq)]
 pub enum Control {
     KalshiSubscribe {
         id: u32,
         channel: Channel,
         markets: Vec<String>,
     },
+    KalshiBookUpdate {
+        id: u32,
+        sid: u32,
+        action: BookAction,
+        markets: Vec<String>,
+        token: Option<metten_engine::sources::StreamToken>,
+    },
+    KalshiTradeUpdate {
+        id: u32,
+        sid: u32,
+        action: BookAction,
+        markets: Vec<String>,
+        token: metten_engine::sources::StreamToken,
+    },
     KalshiIndexes {
         id: u32,
         sid: u32,
+        token: Option<metten_engine::sources::StreamToken>,
     },
     KalshiUnsubscribe {
         id: u32,
@@ -502,7 +589,47 @@ impl Control {
                 };
                 json!({"id":id,"cmd":"subscribe","params":params})
             }
-            (Provider::Kalshi, Self::KalshiIndexes { id, sid }) if *id > 0 && *sid > 0 => {
+            (
+                Provider::Kalshi,
+                Self::KalshiBookUpdate {
+                    id,
+                    sid,
+                    action,
+                    markets,
+                    ..
+                }
+                | Self::KalshiTradeUpdate {
+                    id,
+                    sid,
+                    action,
+                    markets,
+                    ..
+                },
+            ) if *id > 0
+                && *sid > 0
+                && !markets.is_empty()
+                && markets.len() <= 2
+                && markets
+                    .iter()
+                    .all(|m| machine(m) && m.starts_with("KXBTC15M-")) =>
+            {
+                if matches!(
+                    self,
+                    Self::KalshiTradeUpdate {
+                        action: BookAction::Snapshot,
+                        ..
+                    }
+                ) {
+                    return Err(Failure::InvalidRequest);
+                }
+                let action = match action {
+                    BookAction::Add => "add_markets",
+                    BookAction::Delete => "delete_markets",
+                    BookAction::Snapshot => "get_snapshot",
+                };
+                json!({"id":id,"cmd":"update_subscription","params":{"sid":sid,"action":action,"market_tickers":markets}})
+            }
+            (Provider::Kalshi, Self::KalshiIndexes { id, sid, .. }) if *id > 0 && *sid > 0 => {
                 json!({"id":id,"cmd":"update_subscription","params":{"sid":sid,"action":"indexlist"}})
             }
             (Provider::Kalshi, Self::KalshiUnsubscribe { id, subscriptions })

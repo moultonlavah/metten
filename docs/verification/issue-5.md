@@ -2,7 +2,7 @@
 
 ## Current evidence index
 
-**Latest outcome: step-3 implementation and controlled native verification are complete.** See the [final step-3 receipt](#final-step-3-receipt-and-limits) for the tested source, review dispositions and explicit missing external/GUI evidence. The earlier incomplete status is historical. No step-4 integration was started.
+**Latest outcome: bounded step-4 implementation passed the owner-requested two-round Sol review, with its handoff finding corrected and approved.** See [step-4 implementation and verification](#step-4-implementation-and-verification) for source identities, checks, reused evidence and limits. See the [Sol approval and checkpoint receipt](#sol-round-2-approval-and-checkpoint) for current delivery evidence. No step-5 commands/UI or production financial integration were started. The [final step-3 receipt](#final-step-3-receipt-and-limits) and subsequent correction receipt remain evidence for their identified source and unchanged boundaries. Earlier incomplete statuses are historical.
 
 
 **Historical step-2 status: SP1 is corrected; covering checks pass and Sol approved the current behavior in round1 with no findings.** Start at the [late-verification correction](#sp1-late-verification-display-correction-and-sol-loop). The implementation is present against the [final step-2 plan](../proposals/issue-5-egm/step-2-plan.md), revision 5 (`528b87824818515a4349ee99b658f9bc77ed2deb532e514b26f7d7ffa8b60a76`). Owner authority: after reviewing the corrected scope and plain-language explanation, Connor explicitly said **“Okay I approve. Implement”**. This includes the named atomic evidence admission/paired-invalidity correction and shared registration checks. It does not authorize providers, accounts, credentials, UI, trading, dependencies, commits or publication.
@@ -753,3 +753,621 @@ passed. Delivery freshness at 2026-11-16 16:12:09 UTC returned unchanged
 `354f731bc75224d9724ec460b2bb0037a9fa12ea`; no affected review repeat was needed.
 The correction is committed separately atop the original step-3 commit, with
 unrelated README/proposals excluded. No push or step-4 work is authorized here.
+
+## Step 4 bounded implementation planning
+
+Connor requested a bounded implementation plan following maintainability after
+committing the reviewed step-3 fix. Prepared [step-4-plan.md](../proposals/issue-5-egm/step-4-plan.md),
+revision 1, SHA-256 `1db46320dd4a1d55f101f8f0bcccf75e2e20c8727e4eb79a369a0dcf6d5a96eb`. This request authorizes planning only.
+Implementation, provider/account/credential access, step 5/6, tracker changes,
+commits and publication were not performed or newly authorized.
+
+Baseline: selected code `cc22fa9d2e4e749df0ef624aac89fa7cc745700e`, same worktree
+and branch; inherited docs README edit and all proposal/review artifacts preserved.
+Fresh origin/main query returned `354f731bc75224d9724ec460b2bb0037a9fa12ea`.
+Loaded immutable root AGENTS and traversed applicable published discovery and
+verification, maintainability, CONTRIBUTING, issue workflow, domain/triage
+instructions. Local/published inventory has root AGENTS only. Consulted the map,
+relevant native/engine contracts, source types/worker/transport/memory and public
+test seams, product/ADR/glossary, approved design, preserved step-2 plan and source
+profiles. Approved design and step-2 hashes match the prior identities. No
+consequential missing repository guidance or conflict was identified. Issue #5
+remains open with unchecked acceptance, prepared product/high labels, no assignee
+or comments; native/body blockers #3/#4 closed, no children returned. No tracker
+mutation or project-stage verification is claimed.
+
+The plan assigns one owner per fact and reuses existing transport, retry,
+reservations, worker and synchronous source/evaluator interfaces. It specifies
+Kalshi-first reconstruction, bounded discovery/current-next handoff, named BRTI
+and spot mapping, capability stops and meaningful controlled tests. Source reading
+identified two explicit integration requirements: service outbound controls without
+canceling healthy receives, and distinguish a replaceable socket session from the
+terminal provider-task permission fence. Neither is claimed implemented. U1–U7
+remain unresolved; controlled readiness/evaluation does not enable real profiles.
+
+A bounded public-document recheck consulted official Kalshi book/BRTI,
+Coinbase Exchange channels and Kraken v2 trade references linked in the plan.
+It verifies documented shapes only, not access/rights/precision completeness.
+Before implementing exact routes/recovery commands and library polling behavior,
+recheck those primary contracts as stated in the plan.
+
+Planning checks passed: 7 local document links/anchors, U1–U7 coverage, five
+ordered implementation items, explicit numeric ceilings/deadlines/retry policy,
+fenced command shape, whitespace and unchanged approved-document hashes. The
+first numeric checklist caught an omitted explicit 30-second retry-reset value;
+the plan was corrected and the complete checklist then passed. A lead content
+review traced expected files, ownership, failure flows and completion conditions
+against current code/design. No independent agent review or runtime/build tests
+were run for this documentation-only task. Native source/tests/dependencies and
+HEAD/index remain unchanged; existing runtime evidence retains its original limits.
+Delivery query at **2026-11-16 16:21:33 UTC** returned unchanged published guidance
+`354f731bc75224d9724ec460b2bb0037a9fa12ea`; no affected review repeat was required.
+Implementation handoff must refresh guidance again.
+
+## Independent step 4 maintainability plan review
+
+Connor requested one subagent review before implementation. The separate reviewer
+read the unchanged revision-1 [step-4 plan](../proposals/issue-5-egm/step-4-plan.md),
+SHA-256 `1db46320dd4a1d55f101f8f0bcccf75e2e20c8727e4eb79a369a0dcf6d5a96eb`,
+against code `cc22fa9d2e4e749df0ef624aac89fa7cc745700e`. No implementation or
+plan edits were performed. It independently loaded root AGENTS at freshly resolved
+origin/main `354f731bc75224d9724ec460b2bb0037a9fa12ea` and traversed published
+discovery/verification, maintainability, CONTRIBUTING/domain/issue/triage guidance,
+local map/contracts, product/ADR/glossary, approved design, step-2 plan, source
+profiles and connected source/tests. Both instruction inventories contain root
+AGENTS only. No consequential missing guidance or conflict was found. Reviewer
+freshness at 2026-11-16 16:39:46 UTC and lead delivery freshness at
+2026-11-16 16:40:27 UTC returned that same published revision.
+
+**Verdict: revise finding 1 before implementation.**
+
+1. **Must fix — define changed-descriptor recovery.** Plan lines 103–105 require
+   changed-schedule revalidation/handoff; line 168 expects no engine production
+   edits. For a retained successor N whose verified opening changes from 12:15,
+   SourceState::Metadata only toggles verified and continues using the retained
+   descriptor (sources.rs 938–975). RegisterMarket rejects an existing market ID
+   (400–408) and a third retained market (885–889). Re-verification of unchanged
+   descriptors in sources tests does not establish replacement. The approved
+   design's changed-schedule recovery therefore has no specified realizable path.
+   Define the owner-controlled transition before implementation: narrow source
+   descriptor replacement/retirement with public tests and contract/inventory
+   updates if recovery must preserve the context, or an explicit stopped/new-context
+   policy reconciled with promised behavior. Cover same ticker/changed schedule,
+   old completion, fresh metadata and recovered data. Do not add a second mutable
+   native schedule. Skipping this leaves an unplanned engine change, unrecoverable
+   market or risk of re-verifying stale times. This is a static interface finding,
+   not a reproduced runtime defect in the existing app.
+
+The lead checked the cited Metadata/RegisterMarket/validation paths and confirmed
+the gap. The fallback instruction to revise the plan if a missing engine feature
+is discovered is safe, but the demonstrated case should now be resolved in the
+plan. No other supported blocker was found in the reviewed ownership/locality,
+proposed session fence/socket service, bounded parser/worker/memory/ID ledger,
+capability stops or controlled evaluator checks. These proposals still require
+implementation evidence; the review does not claim their library or capacity
+assumptions passed. No runtime tests/builds/provider/credential/app operations
+were run. Plan hash, code, index and unrelated work remain preserved. Only this
+existing evidence record was updated by the lead; no commit or publication.
+
+## Step 4 plan correction and requested re-review
+
+Connor authorized correcting plan finding 1 and a further subagent review before
+implementation. Revised only the existing step-4 plan to revision 2, SHA-256
+`c18c4d20b4f65890d49b4366455fbd77d701504830192d82df754614ad192322`.
+Code remains `cc22fa9d2e4e749df0ef624aac89fa7cc745700e`; original proposals,
+unrelated README edit and index are preserved. Fresh published origin/main query
+still resolves `354f731bc75224d9724ec460b2bb0037a9fa12ea`; root AGENTS and the
+published discovery procedure were refreshed, with unchanged applicable linked
+maintainability/verification guidance reused from the prior independent traversal.
+No new consequential instruction conflict or missing required source was found.
+
+The plan now specifies a bounded same-identity, unentered-market ReplaceMarket
+transition in SourceState, expected-old/token validation, invalidation before
+new schedule use, initial unverified state and fresh-token metadata/data recovery.
+Added engine source/public tests/contract to the inventory and required affected
+source work/storage proof review and ordinary engine checks. Tests cover stale
+completions, invalid/overlapping/no-op replacement, late opening, Stop/Pending
+races, fresh recovery and once-only boundaries. Entered schedules cannot be
+rewritten; they require stopped/new-context recovery.
+
+The connected Evaluator catalog is also immutable. Revision 2 makes the controlled
+consumer stop an attached evaluator on descriptor replacement instead of feeding
+a duplicate registration or new-schedule updates into its old catalog. Retained
+history/checkpoints remain evidence in the stopped evaluator; explicit new-pair
+recovery starts a fresh epoch/history without claiming uninterrupted evaluation.
+Native source-only unentered-successor recovery remains in-context. No evaluator
+production changes or future financial recovery semantics are added by this plan.
+
+Local plan checks passed: seven local links/anchors, corrected scope/inventory/test
+requirements, removal of the obsolete no-engine-change assumption and whitespace.
+The same independent reviewer was reactivated with this exact candidate, unchanged
+code/guidance baseline, prior finding and bounded affected-review instructions.
+Review is pending; no implementation or runtime checks have started.
+
+### Revision 2 independent approval and delivery
+
+The same separate read-only reviewer independently refreshed the published root
+and discovery baseline and approved revision 2: **finding 1 resolved at the
+planning level; no supported remaining must-fix or should-fix issue**. Reviewed
+plan hash remains `c18c4d20b4f65890d49b4366455fbd77d701504830192d82df754614ad192322`.
+It reused unchanged review coverage and retraced the source replacement,
+invalidation/tokens/stamps/current-display and evaluator registration/stop paths.
+It confirmed that explicit evaluator Stop removes the published candidate while
+retaining owned history, so the plan's fresh-pair recovery does not feed changed
+schedules into the old catalog or silently claim history continuity. The new
+public regression requirements address the demonstrated same-ticker case.
+
+Reviewer guidance freshness at 2026-11-16 16:46:15 UTC and lead delivery query at
+2026-11-16 16:46:40 UTC both returned unchanged
+`354f731bc75224d9724ec460b2bb0037a9fa12ea`. No missing consequential guidance
+or conflict was found. Lead verified the delivered plan hash and unchanged code,
+HEAD and index. Reviewer/lead whitespace checks passed. Only this existing receipt
+changed after review; the plan was frozen. No runtime tests, builds, source edits,
+provider/credential operations, commits or publication occurred. Approval covers
+the bounded implementation plan, not implemented behavior or U1–U7/external
+acceptance. Stop remains before implementation pending owner authorization.
+
+## Step 4 implementation in progress
+
+Owner authorized implementation of approved revision-2 plan, hash
+`c18c4d20b4f65890d49b4366455fbd77d701504830192d82df754614ad192322`,
+against selected HEAD `cc22fa9d2e4e749df0ef624aac89fa7cc745700e`.
+Fresh origin/main query returned unchanged `354f731bc75224d9724ec460b2bb0037a9fa12ea`.
+Loaded published root/discovery/maintainability and applicable linked guidance;
+reuse the unchanged product/ADR/map/contracts/approved-document traversal above.
+Issue #5 is open; native/body blockers #3/#4 remain closed. Preserve unrelated
+README edit and proposal artifacts. Expected change path and limits are the
+approved plan inventory: source replacement, native concrete adapters, bounded
+worker/transport integration and controlled tests. No step5/6, real provider or
+credential access, financial run, commit or publication is authorized here.
+Completion and required checks remain pending; no partial result is acceptance.
+
+Implementation inventory reconciliation: the shared `wire.rs` helper serves all
+three concrete decoders and owns lexical/depth/list bounds and exact raw numbers;
+Serde's existing `raw_value` feature is enabled without a library/version upgrade.
+`discovery.rs` owns fixed-route orchestration, bounded metadata validation and the
+60/30/10 opportunity calculation. Its metadata bodies are decoded by the owned
+source worker, not an async HTTP task. Added `source.rs` keeps the source writer,
+view and owned integration together instead of growing the lifecycle/control
+module into an unrelated second responsibility. These are concrete step-4 owners,
+not a provider registry or a new crate. The frozen plan's engine scope is unchanged.
+
+Handoff refresh: fresh default-branch query on 16 November returned
+`28c9f3f337f1eb26456a459c5e83024ab739b946`; missing object fetched with no destination
+ref and no FETCH_HEAD update. Loaded its root AGENTS and CONTRIBUTING, compared
+applicable discovery/verification, maintainability, domain/issue procedures and
+map with the prior `354f731` baseline. The only applicable-tree difference is an
+unrelated UI-helper map pointer; standards and required guidance are unchanged.
+No new missing source or consequential conflict. The task remains selected code
+`cc22fa9` plus this uncommitted implementation; no existing tracking ref/index,
+HEAD, unrelated edit or proposal was replaced.
+
+
+## Step 4 implementation and verification
+
+Connor authorized the approved revision-2 plan's implementation. The selected code
+remains `cc22fa9d2e4e749df0ef624aac89fa7cc745700e`, branch
+`t3/brainstorm-issue-5`, plus the uncommitted step-4 source identified below. There
+are no staged changes. The unrelated one-line `docs/README.md` edit and all
+proposal/review artifacts remain preserved. No commit, push, PR or tracker mutation
+was performed. Stop is before step 5 and step 6; this is not issue-5 acceptance.
+
+### Published guidance and maintainability disposition
+
+Authoritative remote remains `https://github.com/moultonlavah/metten.git`, default
+branch `main`. Fresh handoff discovery and the delivery query at **2026-11-16
+19:59:44 UTC** returned **`c1a6fa973ea0aee8f635a42a9f44923d1ec321df`**.
+The immutable root AGENTS and verification/discovery entry were loaded directly.
+Applicable published maintainability, CONTRIBUTING, code-map, issue workflow,
+triage and domain guidance were traversed; local root instructions, product
+specification, ADR0001, glossary, native/package/engine/tool contracts, source
+profiles and approved task documents were consulted. Published/local discovery
+found root AGENTS only. The selected older worktree lacks the published
+maintainability file; that standard was read from the immutable published tree,
+not treated as absent or copied into this worktree. No required guidance remains
+missing and no consequential conflict was identified. The intermediate published
+updates from `354f731` through `28c9f3f` to this revision add unrelated UI-map
+navigation; applicable standards/procedures are unchanged. Their unchanged evidence
+was reused. Missing objects were fetched without a destination ref or FETCH_HEAD
+update; HEAD, index and existing tracking refs were not moved. The current session
+received Connor's standing discovery rule and explicitly refreshed it after handoff.
+No new agent session or independent implementation review is claimed.
+
+The expected path remains fixed transport → concrete decoder/reconstruction → the
+existing sole source worker/SourceState → derived view. Controlled tests additionally
+use the real Evaluator. Mutable normalized facts stay in SourceState, provider
+format/identity/book state stays in its native decoder, and strategy/history and
+financial decisions remain in the unchanged evaluator. The only engine production
+change is bounded `ReplaceMarket`; the five new public source tests cover its
+invalidity, stop and fresh-pair obligations. A wire-field rename remains local to
+its decoder and fixture; thresholds remain validated JSON. There is no strategy-
+name branch, new crate, library version, compiler change, provider registry,
+per-message task, general scheduler or durable source state.
+
+The implementation inventory departure is the three concrete ownership splits
+recorded above: shared `wire.rs` for bounds/exact numeric tokens used by all
+adapters, `discovery.rs` for fixed-route metadata orchestration, and `source.rs` for
+the sole writer/view and owned integration. Existing Serde's `raw_value` feature
+preserves lexical numbers; Cargo.lock is unchanged. Map and owning contracts now
+point to those owners, behavior and checks. The independently approved plan is
+unchanged; its approval covers planning rather than this implementation's correctness.
+
+### Implemented behavior and corrections
+
+- Kalshi reconstructs both retained YES/NO books, derives complementary asks,
+  preserves quantity/clock/sequence, checks sequence before irrelevant-ticker
+  filtering and recovers both books independently on the same socket. Empty
+  liquidity expires the absent binding; later reconstruction can initialize it.
+  Trade identity ledgers fail capacity rather than evict. BRTI raw values remain
+  separate from average/count/window details. Known command rejection disables
+  its scope; unknown error codes do not become invented entitlement findings.
+- Coinbase and Kraken validate fixed products, snapshots/initialization, monotone
+  identity, same-price new observations and replay/conflict behavior. Kraken
+  validates the whole bounded batch before publication and chooses the newest
+  snapshot identity even when its array is descending. Prices retain exact
+  six-place USD or six-place cents meaning; incompatible precision is refused.
+- Six startup/four successor metadata GETs, two-page/400-candidate bounds,
+  canonical-series/detail validation, opaque cursor encoding, 60/30/10 checks and
+  paced post-opening fallback use existing budgets. Expired metadata cannot
+  readmit a retired slot. Prepared rollover retires before adding, preserves
+  underlying identities and performs no boundary-search GET. Same-ticker schedule
+  replacement revokes before revalidation; entered source contexts stop. A
+  controlled evaluator with an immutable old catalog must stop and recover with
+  an explicit fresh pair/epoch, retaining old history only as stopped evidence.
+- Reader/writer halves are concurrently polled inside each of the three owned
+  provider futures. Progress/control wakes retain the same pending receive. A
+  late old-token frame cannot restore evidence; one coalesced counted snapshot
+  retry can obtain the replacement under the next receive identity. ACK and
+  first/replacement-data deadlines remain separate. Progress starts with the
+  captured tokens, avoiding redundant initial recovery controls.
+- Metadata/connection/gap changes clear reconstruction baselines. Per-market book
+  and trade details retire with their slot. Native permission epochs, session and
+  worker fences invalidate retained views before more ordinary work. Exhausted
+  epochs never wrap. A nonqueued scheduling-loss fact blocks market views until
+  the worker applies core invalidation; a weaker fact cannot erase terminal loss.
+  Only the worker owns the reanchored schedule epoch. Normal slow HTTP work alone
+  is not treated as sleep. A delayed handshake rechecks identities and retained
+  market membership before sending its initial subscriptions.
+- Control receiver ownership returns through Drop even after task return, panic,
+  cancellation or an unpolled future. Explicit recovery joins the old owner first.
+  Shared retry state resets its usable interval on close/drop without adding a
+  transient failure. Ping wakeups coalesce while automatic pongs remain independent
+  of subscription permits. The keepalive counter counts explicit flush attempts,
+  not every automatic wire pong. Existing total-deadline shutdown, retained
+  unfinished handles and guarded engine-save behavior remain covered.
+
+The original RegisterMarket-only schedule replacement failed its new regression;
+`ReplaceMarket` corrects that demonstrated case. An early controlled three-provider
+case with HTTP404 also exposed stale-generation handling that incorrectly ended
+unrelated Kalshi work; the corrected test now retains BRTI and all seven initial
+controls. Other lifecycle/parser corrections above came from static tracing and
+focused tests added during implementation. Do not describe those as individually
+executed red/green reproductions. The delayed-handshake, nonqueued schedule notice,
+ping-burst and shared retry interval cases pass on the final source; they were not
+rerun against a reverted faulty tree. Intermediate compile/fixture/lint failures
+were corrected; only the final results below are passing evidence.
+
+### Executed evidence and reuse
+
+All commands below exited zero against the source manifest below:
+
+| Check | Result and meaning |
+| --- | --- |
+| `/Users/connormoulton/.cargo/bin/cargo test --workspace --locked --quiet` | **221 ordinary tests passed:** 87 native and 134 engine (25 library, 6 session, 34 source, 59 strategy, 10 storage). One native disposable-Keychain check and two release-hour strategy fixtures remain intentionally ignored in this ordinary command. No failed test. |
+| `/Users/connormoulton/.cargo/bin/cargo clippy --workspace --all-targets --locked -- -D warnings` | Passed strict workspace lint, including test targets. |
+| `/Users/connormoulton/.cargo/bin/cargo fmt --all -- --check` and `git diff --check` | Passed formatting/whitespace; new Rust files are included by cargo fmt. |
+| `PATH=/Users/connormoulton/.cargo/bin:$PATH npm run tauri -- build --bundles app` | Passed TypeScript/frontend build and optimized Mac app bundling; artifact `target/release/bundle/macos/Metten.app`, reported 13.65 MiB. It was not launched for a GUI/credential walkthrough. |
+
+Named controlled checks navigate the consequential behavior in
+`src-tauri/src/providers/tests.rs` and owning embedded tests: actual learning JSON
+through reconstructed books/SourceState/Evaluator; empty side expiry; shared gap
+and same-socket old-receive replacement; current/next detail retirement; stale
+metadata/baseline revocation; three repeated rollovers with two books/shared SID;
+six/four metadata GETs and obsolete parsing; three owned tasks/seven initial
+controls; explicit recovery after join; unpolled service Drop; retained context
+charge; native Stop during controlled Pending; ping burst before a rate-limited
+control; and delayed handshake subscribing only retained markets. Embedded checks
+cover exact precision/exponents, depth/string/list/identity limits, 8192-plus-one
+book admission, replacement overlap refusal, whole-batch validation, independent
+ACK/both-book deadlines, scoped command rejection, terminal schedule-loss merging,
+clock discontinuity and permanent epoch exhaustion. Discovery checks include
+initialized-future versus elapsed metadata and scratch ownership through canceled
+handoff. Existing ordinary budget, partial-I/O/drop, canceled-reservation,
+slow-retry, worker/task failure and nonresponsive shutdown/save-guard cases also
+passed in the final suite. These are bounded fixtures and controlled peers, not
+an exhaustive scheduler proof or provider acceptance.
+
+Reuse the identified passing evidence in the final step-3 receipt for both
+release-hour engine fixtures, TypeScript/12 UI checks, Python runner/checkpoint
+regressions, disposable Keychain and packaged native credential/signature/exit/
+marker/cleanup checks. The final bundle rebuild also refreshed TypeScript. Source
+identity comparison confirms unchanged `strategy.rs`, strategy fixtures, engine
+storage, native main/credential/provider-credential/signing/bootstrap/permissions,
+UI and runner/checkpoint files, Cargo.lock and toolchain. Ordinary tests reran the
+relevant shared Rust behavior; no changed release arithmetic, UI, credential or
+runner behavior justifies repeating the longer unchanged checks. The prior staged-
+snapshot evidence applies to its named tree only, not this uncommitted tree. No
+step-4 staged snapshot or remote CI is claimed. The blocked dummy WebKit GUI
+walkthrough and ordinary data-protection-Keychain entitlement/prompt evidence
+remain unverified; no walkthrough was relaunched.
+
+### Retained resources and work argument
+
+The fixed topology remains three provider tasks, one existing worker, one ordinary
+raw slot, one metadata-command slot and seven finite mandatory controls per
+provider. Recovery retains three replaceable stream records, not an event log;
+scheduling invalidity retains one nonqueued fact. Socket reservations are 4 MiB
+each (12 MiB total). Bounded raw ownership can include three receiving tasks,
+one queued payload and one worker payload (5 MiB at the per-message maximum).
+Worker decoding reserves 4 MiB before typed parsing. Each parsed metadata handoff
+retains its 4-MiB permit through the command/reply payload until consumed/dropped;
+HTTP bodies are at most 1 MiB and the bounded discovery collector reserves256 KiB.
+Caller cancellation releases or transfers each owned reservation with its value.
+
+Each retained book reservation is `2 * 8192 * 128 + 65536` = **2,162,688 bytes**.
+Two books reserve4,325,376; a replacement coexisting with both reserves6,488,064,
+below the separate8,388,608 two-book/overlap ceiling. The unchanged pinned Rust
+1.100 BTree convention has11 keys/12 edges and minimum5-key occupancy; node count
+is bounded from that occupancy. An i128-pair node plus edges is under512 bytes,
+so128 bytes per level plus fixed headroom conservatively bounds these trees.
+Each opaque trade identity reserves its text length plus2048 bytes for owned key/
+record/node growth. IDs persist across reconnect until contract retirement, and
+capacity fails explicitly; there is no uncharged ever-growing archive or eviction.
+
+A shared64-KiB base permit follows the native context through worker, source handle
+and provider futures. Every retained derived view reserves256 KiB before cloning;
+this includes its bounded requirements, at most four per-market detail records,
+three underlying detail records and fences in addition to the bounded core view.
+The existing core view bound is below160 KiB; the additional bounded native
+requirements/details/permissions remain inside256 KiB. Constructor overlap has
+its own64-KiB reservation and initial temporary view256 KiB before retained copies.
+All these adapter payload reservations use the same32-MiB owner, including bodies,
+books, scratch and retained consumers. Independent maxima need not fit
+simultaneously: admission refuses before growth when their combined reservation
+would exceed32 MiB. This is a fail-closed allocation argument, not a claim that
+all maximal workloads are supported or that SDK/TLS/kernel/allocator RSS is capped.
+Step-6 measurement and capacity qualification remain pending.
+
+SourceState's existing owner/input/effect/view/constructor proof stays below1 MiB,
+separate from unchanged evaluator8-MiB/4096 work admission. ReplaceMarket checks
+three bounded128-byte identities, the exact expected descriptor, two market slots,
+nonoverlap/duration and revision headroom before commit. Old/replacement descriptor
+text overlap is bounded to768 bytes plus fixed records, with no proportional
+allocation for rejected input. It reuses bounded existing invalidation scans
+(max128 bindings) and two-market selection; it introduces no elapsed-time loop or
+history allocation. Native decoder work is bounded by the admitted1-MiB message,
+depth48,16-KiB text and8192 entries per side. These are bounded work/input claims,
+not measured wall-clock latency guarantees.
+
+### Source identities and limits
+
+SHA-256 values below identify final code/configuration and unchanged proof inputs.
+The manifest digest is the SHA-256 of ordered `path SPACE hash NEWLINE` entries.
+Documentation receipts are not part of that code manifest.
+
+Manifest SHA-256: `369199615e6cc7b27db3c16a427e160fc2570230d4ab9993f7a6451e3d430372`.
+
+| Path | SHA-256 |
+| --- | --- |
+| `crates/engine/src/sources.rs` | `2819aef575e388310f312a4f384d0baf6e6a9d76cefa3b907fc61d34cc7a1c95` |
+| `crates/engine/tests/sources.rs` | `abaa7acba5bea64383911405668241e33a5086e592631f30658c915e0be9d34e` |
+| `src-tauri/Cargo.toml` | `44109ec5c61faa70d14c93d2bc56f0d501df8bcf8ec2404a70cf3dbee2f059e3` |
+| `src-tauri/src/providers/mod.rs` | `7f6c89db192c934ca59fea7f3c78981d628170135435af101340fa051a299cda` |
+| `src-tauri/src/providers/memory.rs` | `a18f18263bbcf07d762642e7ef08ee56c1b9dde32741d585e16df0a8d3b6f73b` |
+| `src-tauri/src/providers/transport.rs` | `948b1c59508f9bb12c5644d33c7f21bdc39f083d531a719355adb99babd4c835` |
+| `src-tauri/src/providers/wire.rs` | `d617adbfd15c1a0751a362efdc27a32e54e2655732d92f54b4c2d10ad14048c0` |
+| `src-tauri/src/providers/kalshi.rs` | `989a5780249c264d40448718baab090758b305f9f1e1f8663ab2253992c614cd` |
+| `src-tauri/src/providers/coinbase.rs` | `0329f02900875c567cab60593ac96146d093fb3ee688b502cebb1c8101e9ba71` |
+| `src-tauri/src/providers/kraken.rs` | `71f81e097b5836b2de97a343dfc68e96645aba258bbed94c154a0a22029ff6f6` |
+| `src-tauri/src/providers/discovery.rs` | `fe88eb8c4b8de0ecc1457df10c0a045bd595ab1732ee1393378c5f72b433a730` |
+| `src-tauri/src/providers/source.rs` | `f2ef0f7ac38b142a5df22bcf302272c633455d4021e82ddadc4c8d20f51dba89` |
+| `src-tauri/src/providers/tests.rs` | `e976f7538d0b5c229842d03c944342d84a8d494a0fe8f607614de8fb2ba03d7c` |
+| `Cargo.lock` | `82575c1298d20e259660d0efddce8deda3876bfed17b1c47ca29d662d7e5df86` |
+| `rust-toolchain.toml` | `6b1cf8341d9a08d76c6deb1e9df90a0b208d0ef0d00ee05e0173e9cd4f0f425d` |
+| `crates/engine/src/strategy.rs` | `54e76b54a69526aacd710887ba017b6fe7f442467db005caae5969d006961322` |
+| `examples/learning.json` | `a79bd747078601cd16bc292c7896cdcb9f2fe3db0feebf412284a50a2bd50aa5` |
+
+Bundled executable SHA-256: `5129e145d10c05ac14d0ec64115bea1c1b852287e2e1cce8711f0f9edea3c6b4`.
+
+Approved document identities were rechecked unchanged: design
+`21e2926329f67fef05b264dcb8a0dfca0455aaa697c753bfc4f2d95b19fe4bc7`, step-2
+revision5 `528b87824818515a4349ee99b658f9bc77ed2deb532e514b26f7d7ffa8b60a76`,
+step-4 revision2 `c18c4d20b4f65890d49b4366455fbd77d701504830192d82df754614ad192322`.
+The exact policy is the approved design, not inferred transport timeouts.
+
+**Limits:** U1–U7 remain unresolved. No real credentials, ordinary credential-item
+access, provider/demo/production account calls, trading, paid service, deployment,
+publication or other trading application was used. Synthetic current-use leases
+are test-only; production capabilities remain unsupported. Transport success
+establishes neither price freshness, genuine book-observation semantics, complete
+history, opening/settlement references, account entitlement nor rights. Actual
+OS sleep/wake, production throughput/RSS/capacity, provider delivery/live acceptance,
+legal clearance, ordinary Keychain prompts/entitlements, GUI acceptance and remote
+CI for this unpublished work remain unverified. Source snapshots are point-in-time
+facts, not a price lease; consumers must recheck full dependencies, native
+permissions and current clock before use. The lead reviewed final ownership,
+callers, changed source and unrelated-work preservation; no independent
+implementation review result is asserted. The requested implementation ends here.
+
+Delivery consistency check: final query at **2026-11-16 20:01:53 UTC** again
+returned unchanged `c1a6fa973ea0aee8f635a42a9f44923d1ec321df`; no affected
+review was repeated. All28 newly added/changed local Markdown links/anchors
+resolved. Final formatting and whitespace checks passed. Approved hashes,
+selected HEAD and empty index were checked; protected tracked code/fixtures/tools
+outside the bounded edits matched HEAD. The unrelated docs README still has its
+original single added line; proposal/review files remain untracked and untouched.
+Only documentation receipts changed after the final executable checks.
+
+
+## Step 4 owner-requested sol-loop
+
+Connor requested one Sol subagent loop before committing. This authorizes the
+bounded review/correction loop; no push/publication or later-stage work. The lead
+will not commit until agreement on the current behavior and covering checks.
+Fresh origin/default-main query on16 November again returned published guidance
+`c1a6fa973ea0aee8f635a42a9f44923d1ec321df`; immutable root/discovery and applicable
+linked standards remain the loaded baseline. No new missing source/conflict.
+Objects fetched with no destination refs/FETCH_HEAD update preserve tracking refs.
+The published merge-base is `47d0f384669f38aaf76e3c5bc50060836b235f02`.
+Use the accepted step-3 HEAD `cc22fa9d2e4e749df0ef624aac89fa7cc745700e`
+as the bounded step-4 review base rather than widening the review to prior stages.
+One fixed diff command reviews that base through the selected paths; six new
+native source files are read explicitly. The unrelated docs README and proposal
+artifacts are excluded from changes, while approved plans remain review inputs.
+The source manifest and unchanged working copy allow reuse of the just-passed221
+ordinary tests, strict workspace Clippy, formatting and Mac bundle checks above.
+No additional runtime check is needed merely to start review. Remote CI, real-feed,
+GUI/ordinary-Keychain and U1–U7 limits remain unchanged.
+
+Capabilities exposed Codex `gpt-6.1-sol` as the latest available Sol. One review task
+per round, default3-round budget; only evidenced state/concurrency or security
+findings can justify extending to5. The reviewer is read-only and may not delegate.
+The lead makes/dispositions minimal corrections after each result and records the
+ledger here. No scoped edit occurs while a review is running.
+
+Initial scope before this ledger: **18 files, +7254/−26 lines**, including new files; code/config **+6644/−15**. Documentation receipts can grow without behavior changes. Round1 pending; no finding or approval yet. Usage not yet returned.
+
+
+### Sol round 1: S1 and bounded correction
+
+Round1 completed with **CHANGES** using Codex `gpt-6.1-sol` on verified high
+reasoning effort. Task ID:
+`node:delegated-task:command%3Amcp%3Aebe304f2-6e01-499b-90d4-997fa0f55c9a%3Adelegate-task%3Ametten-step4-sol-r1-20261116`.
+The reviewer independently loaded immutable c1a6fa9 root AGENTS and traversed the
+published discovery, map, maintainability, CONTRIBUTING, domain, issue and triage
+sources; inspected local root/contracts/product/ADR/approved plans; found no nested
+instructions, missing required source or consequential conflict; and matched all
+three approved-document and17 code/proof-input hashes. It read the full scoped
+change and six untracked code owners with connected callers. No second actionable
+finding was returned. Usage was not exposed; it is not estimated.
+
+| ID | Severity | Lead disposition and evidence |
+| --- | --- | --- |
+| S1 | blocker | Agreed. An ordinary5-ms worker tick could pass the exact opening millisecond, so the equality-only dispatcher emitted no prepared boundary. The reviewer reproduced0 instead of1 entry in a disposable rollover variant. The lead's new between-ticks regression independently failed with the same0/1 assertion before the fix, then passed after it. Correction implemented; independent resolution pending round2. |
+
+`SourceWorker::advance` now orders at most two due retained openings, applies each
+at its exact scheduled clock before advancing to sampled time, and refuses to
+relabel post-opening accepted facts as pre-opening readiness. Existing core
+ready-since, generation, lease, history and once-only-entry checks remain the
+entry authority. Already elapsed windows are not given a late entry. The worker
+applies scheduling/connection invalidity first, dispatches due boundaries before
+ordinary metadata work, and repeats that ordering after resampling time before
+raw data. This closes the second crossing point between a tick's initial advance
+and its actual raw processing. A normal missed millisecond is handled without a
+new scheduler, timer task, persistent boundary ledger or engine behavior change.
+
+The existing repeated-rollover fixture is shared by exact-tick and1-ms-late tests;
+both assert one boundary at the scheduled timestamp on each of three handoffs,
+retire-before-add, two retained books, stable subscription/source identity and no
+duplicate entry. A second new test covers invalidated preparation and readiness
+rebuilt only after opening: neither creates an entry; late verified readiness can
+still display the new current market. The new tests target S1 rather than mirror
+implementation details. Sharing the existing fixture avoids duplicate setup;
+no unrelated refactor, new public API, strategy or engine code was added.
+
+The dispatcher can transiently hold its normal source view and one read-only
+opening-clock view; the latter is dropped before the boundary effect is built.
+Each core view is below160 KiB by the unchanged bound. The retained core owner
+(under128 KiB) plus two such views is under448 KiB before fixed bounded boundary
+input; after dropping the second view, one effect (under128 KiB) fits the same
+allowance. Constructor/input phases do not coexist with this synchronous advance.
+It stays within the existing1-MiB source envelope, separately from adapter32 MiB
+and evaluator8 MiB. Sorting/checking at most two descriptors adds fixed bounded
+work, not an elapsed-time loop. No production latency or capacity is inferred.
+
+Final covering commands after correction passed: **223 ordinary Rust tests**
+(89 native +134 engine), strict workspace/all-targets Clippy, cargo fmt check and
+whitespace. The Mac optimized app bundle rebuilt successfully against corrected
+production behavior. An intermediate negative-test import error made test/lint
+attempts fail; those were corrected and both checks explicitly rerun to zero.
+The two targeted rollover tests and late-readiness/invalidity test pass. Existing
+unchanged release-hour/UI/Python/credential evidence retains the prior reuse
+rationale. No GUI, Keychain or real-provider walkthrough was run.
+
+Guidance refreshed before round2 at **2026-11-16 20:31:08 UTC**: default main now
+publishes **`dc892f8e19c710cc2c435b43d90b14d440ff6730`**. Loaded that root;
+compared applicable guidance and read changed CONTRIBUTING and map pointers plus
+published Oxlint configuration/evidence navigation. Root/discovery/maintainability/
+domain/issue instructions are unchanged. The addition is JS/TS correctness lint
+for unchanged source/tests; this older selected package has no new lint command.
+No JS/TS changes require an affected lint rerun, and no lint configuration or
+unrelated tooling is imported into step4. Required review scope and native checks
+are unchanged; no missing applicable guidance/conflict. Objects fetched without
+updating refs, index, HEAD, working files or FETCH_HEAD. Round2 must independently
+read the new published entry and compare that discovered set.
+
+Corrected17-input manifest SHA-256: `d063d290528b7df6485885dfee03c582968884eecc7ad328d8f65f1397ced228`. All earlier entries remain unchanged except these overrides:
+
+| Path | SHA-256 |
+| --- | --- |
+| `src-tauri/src/providers/source.rs` | `aa4cb6540f4b21624a3f01180e318d4acab9b67d82c59a6a69f168626b8f8b37` |
+| `src-tauri/src/providers/tests.rs` | `5b2051b99a8d33b5ac4e9ffb869d113bd182942f5f71742f9c1f6a9bd58bedf8` |
+
+Corrected bundled executable SHA-256: `5129e145d10c05ac14d0ec64115bea1c1b852287e2e1cce8711f0f9edea3c6b4`.
+
+Round2 candidate measurement before this final ledger line:18 files,+7465/−26
+including untracked code; code/config+6743/−15 versus initial+6644/−15. The99
+additional code/config lines are the bounded dispatcher/worker ordering and two
+focused regressions using shared fixture setup; no optional behavior was added.
+Tracked-only `git diff --shortstat` omits all six new source files and is not a
+complete change-size claim. No finding was declined. S1 is fixed with passing
+checks, awaiting independent resolution; no approval/commit/push yet.
+
+
+### Sol round 2 approval and checkpoint
+
+**Sol verdict: APPROVE. S1 resolved; no open blocker or should-fix finding.**
+Two rounds total with Codex `gpt-6.1-sol` on verified high reasoning effort:
+round1 full change/connected-code review, round2 only S1/changed callers and
+regressions with unchanged coverage reused. No finding was declined and no
+additional round is required. Usage was not exposed and is not estimated.
+Round2 task ID:
+`node:delegated-task:command%3Amcp%3Aebe304f2-6e01-499b-90d4-997fa0f55c9a%3Adelegate-task%3Ametten-step4-sol-r2-20261116`.
+
+The reviewer independently ran all three targeted regressions: exact-tick repeated
+rollover,1-ms-late repeated rollover at the exact boundary timestamp, and revoked/
+late-rebuilt preparation. All passed. It traced changed worker callers and
+confirmed known invalidity precedes dispatch at both sampling points, ordering
+and once-only readiness remain enforced, and no scheduler/owner/engine behavior
+was added. It independently refreshed/loaded published root at dc892f8 and
+traversed discovery/verification, maintainability, map, CONTRIBUTING, domain,
+issue and triage sources plus local contracts/product/ADR/approved sections.
+All three approved-document identities and17 current code/proof inputs matched
+the corrected manifest above. No missing applicable guidance or consequential
+conflict. The reviewer changed no repository file, index or ref. Its approval
+reuses round1 coverage and does not claim another whole-code audit or broad
+check execution. The lead read the completed result and accepts the disposition;
+no remaining concern was identified within this bounded task.
+
+Lead delivery freshness query at **2026-11-16 20:35:26 UTC** again returned
+unchanged dc892f8e19c710cc2c435b43d90b14d440ff6730. No affected guidance review
+needs repetition. Current reviewed code is frozen. The99-line code/config growth
+from+6644/−15 to+6743/−15 is confined to S1's bounded dispatcher/callers and two
+regressions sharing existing setup. Documentation/reporting growth is separate.
+The approved behavior has223 passing ordinary tests, strict Clippy, formatting,
+whitespace and rebuilt Mac app evidence above; unchanged evidence is reused only
+within its named limits. The next operation is explicit18-file staging and the
+published disposable staged-snapshot check before the local commit. No push,
+publication or later-stage work is authorized by this checkpoint.
+
+
+Checkpoint verification passed against immutable staged tree
+**`bf9ac69d8ccbb40800737eaec8e5e7deebf20faa`** using:
+
+`env CARGO_TARGET_DIR=<selected-worktree>/target python3 scripts/check-staged.py
+sh -c 'npm ci && npm run build && /Users/connormoulton/.cargo/bin/cargo test --workspace --locked'`
+
+The published helper exported the exact18-file staged change over its tracked
+base into a disposable folder, installed locked frontend dependencies, built assets
+and passed223 ordinary Rust tests (89 native +134 engine; same3 intentional ignored
+checks). It exited zero and cleaned its owned temporary folder. No unstaged
+proposal, source or dependency was required. Clippy/format/bundle and the Sol
+reviews are reused for byte-identical reviewed code. Only this documentation
+receipt changed after that snapshot; staged source/configuration/test blobs are
+compared with its tree before committing, and whitespace/link checks are repeated.
+All29 changed local Markdown links/anchors resolve in the selected working copy;
+approved untracked plans remain deliberately outside the checkpoint. The20
+preserved README/proposal/review files still match their pre-staging hashes.
+Final remote query at **2026-11-16 20:37:38 UTC** returned unchanged dc892f8.
+The bounded local commit follows this evidence; nothing is pushed or published,
+and no later stage or real-provider/financial capability is enabled.

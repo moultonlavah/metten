@@ -1777,3 +1777,295 @@ fn metadata_display_does_not_consume_or_repeat_an_eligible_boundary() {
         .unwrap();
     assert!(duplicate.batch.transactions.is_empty());
 }
+
+#[test]
+fn changed_successor_schedule_revokes_then_requires_fresh_metadata_and_data() {
+    let mut s = state(true);
+    initialize(&mut s, true, 0);
+    verify(&mut s, "m", 0);
+    verify(&mut s, "n", 0);
+    let stamp = s.stamp(&[3, 4]).unwrap();
+    let old_meta = s.token(Stream::Metadata);
+    let old_book = s.token(Stream::Book);
+    let changed = market("n", 910001);
+    s.apply(envelope(
+        0,
+        SourceEvent::ReplaceMarket {
+            token: old_meta,
+            expected: market("n", 900001),
+            replacement: changed.clone(),
+        },
+    ))
+    .unwrap();
+    assert!(!s.is_current(&stamp));
+    let view = s.snapshot(0).unwrap();
+    assert_eq!(view.markets.len(), 2);
+    assert_eq!(view.markets[1].descriptor, changed);
+    assert!(!view.markets[1].verified);
+    assert_eq!(
+        s.apply(envelope(
+            0,
+            SourceEvent::Metadata {
+                token: old_meta,
+                market_id: "n".into(),
+                verified: true
+            }
+        ))
+        .unwrap_err()
+        .code,
+        "obsolete_generation"
+    );
+    assert_eq!(
+        s.apply(envelope(
+            0,
+            SourceEvent::Update {
+                stream: Stream::Book,
+                token: old_book,
+                updates: vec![update(binding(3, "n", Side::Yes), "31", None, 2000000)],
+                coverage: vec![]
+            }
+        ))
+        .unwrap_err()
+        .code,
+        "obsolete_generation"
+    );
+    verify(&mut s, "m", 0);
+    verify(&mut s, "n", 0);
+    assert_ne!(
+        s.snapshot(0).unwrap().markets[1].preparation,
+        Preparation::Ready
+    );
+    initialize(&mut s, true, 0);
+    assert_eq!(
+        s.snapshot(0).unwrap().markets[1].preparation,
+        Preparation::Ready
+    );
+    let boundary = s
+        .apply(envelope(
+            910001,
+            SourceEvent::Boundary {
+                market_id: "n".into(),
+            },
+        ))
+        .unwrap();
+    assert!(boundary.batch.transactions.iter().any(|t| {
+        t.changes
+            .iter()
+            .any(|c| matches!(c, EvidenceChange::MarketBoundary { .. }))
+    }));
+    let duplicate = s
+        .apply(envelope(
+            910001,
+            SourceEvent::Boundary {
+                market_id: "n".into(),
+            },
+        ))
+        .unwrap();
+    assert!(duplicate.batch.transactions.is_empty());
+    let mut changed_again = changed.clone();
+    changed_again.open_ms += 1;
+    changed_again.close_ms += 1;
+    s.apply(envelope(
+        910001,
+        SourceEvent::ReplaceMarket {
+            token: s.token(Stream::Metadata),
+            expected: changed,
+            replacement: changed_again,
+        },
+    ))
+    .unwrap();
+    assert!(s.snapshot(910001).unwrap().stopped);
+}
+
+#[test]
+fn replacement_noop_preserves_readiness_and_bad_schedule_stays_revoked() {
+    let mut s = state(true);
+    initialize(&mut s, true, 0);
+    verify(&mut s, "n", 0);
+    let stamp = s.stamp(&[3, 4]).unwrap();
+    let token = s.token(Stream::Metadata);
+    s.apply(envelope(
+        0,
+        SourceEvent::ReplaceMarket {
+            token,
+            expected: market("n", 900001),
+            replacement: market("n", 900001),
+        },
+    ))
+    .unwrap();
+    assert!(s.is_current(&stamp));
+    assert_eq!(
+        s.snapshot(0).unwrap().markets[1].preparation,
+        Preparation::Ready
+    );
+    assert!(
+        s.apply(envelope(
+            0,
+            SourceEvent::ReplaceMarket {
+                token,
+                expected: market("n", 900001),
+                replacement: market("n", 1)
+            }
+        ))
+        .is_err()
+    );
+    assert!(!s.is_current(&stamp));
+    assert!(s.apply(envelope(0, SourceEvent::Advance)).is_err());
+    s.invalidate(Scope::Market, Unavailable::MetadataChanged, 0, None)
+        .unwrap();
+    assert!(s.snapshot(0).unwrap().bindings.iter().all(|b| !b.usable));
+}
+
+#[test]
+fn replacement_expected_descriptor_must_match_and_late_verification_never_enters() {
+    let mut s = state(true);
+    initialize(&mut s, true, 0);
+    verify(&mut s, "n", 0);
+    let stamp = s.stamp(&[3, 4]).unwrap();
+    assert_eq!(
+        s.apply(envelope(
+            0,
+            SourceEvent::ReplaceMarket {
+                token: s.token(Stream::Metadata),
+                expected: market("n", 900002),
+                replacement: market("n", 910001)
+            }
+        ))
+        .unwrap_err()
+        .code,
+        "identity_mismatch"
+    );
+    assert!(s.is_current(&stamp));
+    let changed = market("n", 910001);
+    s.apply(envelope(
+        910002,
+        SourceEvent::ReplaceMarket {
+            token: s.token(Stream::Metadata),
+            expected: market("n", 900001),
+            replacement: changed.clone(),
+        },
+    ))
+    .unwrap();
+    verify(&mut s, "n", 910002);
+    values(
+        &mut s,
+        910002,
+        vec![
+            update(binding(3, "n", Side::Yes), "31", None, 2000000),
+            update(binding(4, "n", Side::No), "61", None, 2000000),
+        ],
+    );
+    let boundary = s
+        .apply(envelope(
+            910002,
+            SourceEvent::Boundary {
+                market_id: "n".into(),
+            },
+        ))
+        .unwrap();
+    assert!(boundary.batch.transactions.iter().all(|t| {
+        t.changes
+            .iter()
+            .all(|c| !matches!(c, EvidenceChange::MarketBoundary { .. }))
+    }));
+    assert_eq!(
+        s.snapshot(910002).unwrap().current_market.as_deref(),
+        Some("n")
+    );
+}
+#[test]
+fn oversized_schedule_correction_revokes_and_blocks_until_revocation_is_delivered() {
+    let mut s = state(true);
+    initialize(&mut s, true, 0);
+    verify(&mut s, "n", 0);
+    let stamp = s.stamp(&[3, 4]).unwrap();
+    let mut invalid = market("n", 910001);
+    invalid.contract_id = "x".repeat(129);
+    assert_eq!(
+        s.apply(envelope(
+            0,
+            SourceEvent::ReplaceMarket {
+                token: s.token(Stream::Metadata),
+                expected: market("n", 900001),
+                replacement: invalid
+            }
+        ))
+        .unwrap_err()
+        .code,
+        "resource_limit"
+    );
+    assert!(!s.is_current(&stamp));
+    assert!(s.apply(envelope(0, SourceEvent::Advance)).is_err());
+    s.invalidate(Scope::Market, Unavailable::MetadataChanged, 0, None)
+        .unwrap();
+    assert!(s.snapshot(0).unwrap().bindings.iter().all(|b| !b.usable));
+}
+#[test]
+fn changed_descriptor_stops_attached_pending_evaluator_and_explicit_recovery_starts_empty() {
+    let mut s = state(false);
+    let mut e = evaluator();
+    let effect = initialize(&mut s, false, 0);
+    finish(&mut e, effect);
+    let stamp = s.stamp(&[1, 2]).unwrap();
+    let pending = s.apply(envelope(0, SourceEvent::Advance)).unwrap();
+    e.begin(pending.batch).unwrap();
+    let changed = market("m", 2);
+    let revoked = s
+        .apply(envelope(
+            0,
+            SourceEvent::ReplaceMarket {
+                token: s.token(Stream::Metadata),
+                expected: market("m", 1),
+                replacement: changed.clone(),
+            },
+        ))
+        .unwrap();
+    assert!(!s.is_current(&stamp));
+    // Pending work cannot admit a second batch; terminal Stop preserves its owned storage.
+    let retained = e.allocated_bytes();
+    assert!(matches!(
+        e.process_slice(SliceControl::Stop, None),
+        SliceResult::Stopped
+    ));
+    assert_eq!(e.allocated_bytes(), retained);
+    assert!(matches!(
+        e.process_slice(SliceControl::Continue, None),
+        SliceResult::Stopped
+    ));
+    assert!(
+        revoked
+            .batch
+            .transactions
+            .iter()
+            .any(|t| t.changes.iter().any(|c| matches!(
+                c,
+                EvidenceChange::Validity {
+                    valid_until_ms: 0,
+                    ..
+                }
+            )))
+    );
+    let bindings = vec![binding(1, "m", Side::Yes), binding(2, "m", Side::No)];
+    let fresh = SourceState::new(
+        &rules(),
+        std::slice::from_ref(&changed),
+        &bindings,
+        &[(1, controlled()), (2, controlled())],
+    )
+    .unwrap();
+    let recovered = Evaluator::new(
+        rules(),
+        RunContext {
+            strategy_version: "fresh".into(),
+            run_id: "new-epoch".into(),
+            go_time: "new controlled epoch".into(),
+            series_id: "btc15m".into(),
+            markets: vec![changed],
+            bindings,
+        },
+    )
+    .unwrap();
+    assert!(!fresh.is_current(&stamp));
+    assert!(recovered.snapshot().candidate.is_none());
+    assert!(recovered.snapshot().checkpoints.is_empty());
+}
