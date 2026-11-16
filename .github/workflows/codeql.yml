@@ -18,6 +18,8 @@ jobs:
       fail-fast: false
       matrix:
         include:
+          - language: rust
+            runner: macos-15
           - language: javascript-typescript
             runner: ubuntu-latest
           - language: actions
@@ -53,10 +55,3 @@ jobs:
                   for diagnostic in invocation.get("toolExecutionNotifications", []):
                       print(json.dumps(diagnostic))
           PYTHON
-
-  skipped-rust:
-    name: Analyze (rust)
-    if: ${{ false }}
-    runs-on: macos-15
-    steps:
-      - run: exit 0
