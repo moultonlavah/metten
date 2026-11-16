@@ -41,6 +41,7 @@ class CredentialRunnerRecovery(unittest.TestCase):
             self.assertIn("closed private channel write caught without terminating runner", result)
             self.assertIn("late child exit recovered, channels closed, unsuccessful exit stays failed", result)
             self.assertIn("noisy child exited within deadline; all output captured and markers rejected", result)
+            self.assertIn("provider mode, bootstrap shape, rejected/late/closed acknowledgments", result)
             print(result, end="")
 
 

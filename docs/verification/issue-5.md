@@ -1,8 +1,11 @@
-# Issue #5: step-2 engine evidence
+# Issue #5: source foundation evidence
 
 ## Current evidence index
 
-**Current status: SP1 is corrected; covering checks pass and Sol approved the current behavior in round1 with no findings.** Start at the [late-verification correction](#sp1-late-verification-display-correction-and-sol-loop). The implementation is present against the [final step-2 plan](../proposals/issue-5-egm/step-2-plan.md), revision 5 (`528b87824818515a4349ee99b658f9bc77ed2deb532e514b26f7d7ffa8b60a76`). Owner authority: after reviewing the corrected scope and plain-language explanation, Connor explicitly said **“Okay I approve. Implement”**. This includes the named atomic evidence admission/paired-invalidity correction and shared registration checks. It does not authorize providers, accounts, credentials, UI, trading, dependencies, commits or publication.
+**Latest outcome: step-3 implementation and controlled native verification are complete.** See the [final step-3 receipt](#final-step-3-receipt-and-limits) for the tested source, review dispositions and explicit missing external/GUI evidence. The earlier incomplete status is historical. No step-4 integration was started.
+
+
+**Historical step-2 status: SP1 is corrected; covering checks pass and Sol approved the current behavior in round1 with no findings.** Start at the [late-verification correction](#sp1-late-verification-display-correction-and-sol-loop). The implementation is present against the [final step-2 plan](../proposals/issue-5-egm/step-2-plan.md), revision 5 (`528b87824818515a4349ee99b658f9bc77ed2deb532e514b26f7d7ffa8b60a76`). Owner authority: after reviewing the corrected scope and plain-language explanation, Connor explicitly said **“Okay I approve. Implement”**. This includes the named atomic evidence admission/paired-invalidity correction and shared registration checks. It does not authorize providers, accounts, credentials, UI, trading, dependencies, commits or publication.
 
 Selected branch `t3/brainstorm-issue-5`, starting HEAD `96d3ff3a591a3231c8ecf600c858292b0b2fe7e9`. Existing docs/README edit and untracked proposals/reviews are preserved. The published PR #44 maintainability standard at `f90316e283115f5c6ab9c0c54f47858b2a67703c` was read in full again before code. Issue #5 is open with four unchecked criteria/no comments; native blockers #3/#4 remain closed (fresh read-only check). The approved 599-line design stays unchanged.
 
@@ -10,7 +13,7 @@ Expected change path: validated requirements → source owner → existing norma
 
 ## Published guidance baseline
 
-**Authoritative delivery baseline:** origin/main **890af2eaff4fa525163bc00339ce081dbeeee4bf**; the latest lead/reviewer refresh receipts are in the [startup correction](#startup-signed-time-correction-and-sol-loop). The earlier 02:01 UTC receipt below is historical. Selected code remains96d3ff3a591a3231c8ecf600c858292b0b2fe7e9 plus the approved eight-file uncommitted scope. The a22a9a9 entries below preserve the earlier implementation/review and owner-requested refresh chronology; they are not a competing current baseline.
+**Historical step-2 delivery baseline** (current step-3 baseline is fa366362 in its continuation receipt): origin/main **890af2eaff4fa525163bc00339ce081dbeeee4bf**; the latest lead/reviewer refresh receipts are in the [startup correction](#startup-signed-time-correction-and-sol-loop). The earlier 02:01 UTC receipt below is historical. Selected code remains96d3ff3a591a3231c8ecf600c858292b0b2fe7e9 plus the approved eight-file uncommitted scope. The a22a9a9 entries below preserve the earlier implementation/review and owner-requested refresh chronology; they are not a competing current baseline.
 
 Connor refreshed this existing session with the published-instruction discovery rule during implementation. The lead queried the selected origin (`https://github.com/moultonlavah/metten.git`), repository default branch (`main`) and live commit API, obtaining **`a22a9a9188b683e07be141702e93295d83a4ade1`** on 2026-11-15. This is fresh remote evidence, not a cached tracking ref. Read immutable root AGENTS.md and its applicable linked maintainability, code-map, verification (including maintainability review), issue-workflow, triage and domain procedures from that commit. The published recursive tree contains root AGENTS.md but no separate instruction-discovery procedure. No extra local/ancestor instructions were found; local task/design/ADR/source contracts remain applicable. Source/index/tracking refs were preserved; no merge or fetch was needed.
 
@@ -324,3 +327,298 @@ This restores bounded local step2 acceptance for SP1; broader issue5/provider ac
 Connor explicitly authorized “commit your work” and requested a RISEN code-review handoff. This adds local commit authority only, not push/PR/provider/live authority. Fresh origin/main query 2026-11-16T05:22:29.634744+00:00 returned fa3663624436e9e4df9d2b000d57f7f21e099786; reloaded pinned root/discovery/staged-check procedure and reused unchanged applicable guidance. Stage only the approved eight implementation/evidence paths; preserve unrelated docs/README and all untracked proposal/review artifacts outside this checkpoint. Those task documents therefore require this same working copy for the fresh review; the commit alone does not contain their historical approval artifacts.
 
 `python3 scripts/check-staged.py /Users/connormoulton/.cargo/bin/cargo test -p metten-engine --locked` passed against staged tree **46ddfa861c3ea8c19380083e0d8efdf12e22c203**:129ordinary tests,2release-only ignored. The temporary exported tree proves selected code/tests compile and pass without unstaged files. Prior current-source release-hour/fmt/clippy/Sol evidence remains applicable to the byte-identical behavior files. After that pass only this checkpoint receipt was appended; final staging rechecks receipt/whitespace and verifies all other staged blobs unchanged instead of rerunning unchanged engine behavior. No review or implementation for the fresh session is executed here.
+
+## Step 3 implementation baseline
+
+Active session refreshed published instructions on 2026-11-16 at approximately 05:45 UTC. Selected code remains `875357ca1ab502d99b03b83193ed1e5526af9d51`, branch `t3/brainstorm-issue-5`. Fresh `git ls-remote --symref origin HEAD` resolves authoritative `https://github.com/moultonlavah/metten.git`, default `main`, guidance `fa3663624436e9e4df9d2b000d57f7f21e099786`. Loaded immutable root AGENTS, verification/discovery, maintainability, code-map, issue-tracker and CONTRIBUTING. Published tree has no nested AGENTS. Local root/standing instructions apply; preserve unrelated docs/README and every untracked proposal artifact. No staging, commits or publication authorized.
+
+Approved design and revision-5 step-2 plan SHA-256 match the handoff exactly. Issue #5 full body/comments/native blockers read with gh: open, four unchecked criteria, no comments, #3/#4 closed, no children, parent endpoint 404 (no parent). Queue currently Backlog, unassigned; no external messages/mutations authorized. Step 3 does not complete issue acceptance. U1–U7 remain open.
+
+Expected change path: native provider credential owner -> parsed finite signing -> fixed-host transport and shared budgets -> bounded admission/generation fence -> owned task completion; existing Quit waits for confirmed provider completion before strategy/credential/engine save. Engine, SQLite, strategy, UI and command permissions unchanged. New modules are required security/transport owners named in the approved inventory, with controlled tests at their Rust boundary. Step-4 decoding and step-5 commands/fixture IPC are excluded.
+
+### Step-3 behavior, review and verification
+
+Implemented native paths: strict fixed-item provider records and deterministic status/readback; Ed25519 PKCS#8 and 2048-bit RSA PKCS#1/PKCS#8 signing; finite fixed-host GET/control/handshake manifest; bounded REST/WebSocket framing; shared local traffic budgets; bounded HTTP retry with cancellation; full-queue revocation; fixed provider task slots; an optional owned synchronous worker; provider-specific cancellation and joined Kalshi/BRTI revocation before replace/remove; generation fences; retained handles and explicit recovery. Quit owns the coordinator outside its mutex while joining against one total 5-second deadline, and refuses engine save when completion is unconfirmed. No command, screen path or startup action can start these connections yet.
+
+Lead source review caught and corrected: repeated awaiting of an already-consumed task handle; a shared lock held across source joins; signing before budget wait; interrupted socket reuse; independent-provider cancellation during credential changes; unbounded serialization before record-byte admission; and a test-only Core Foundation handle making Workspace non-Send. Initial compilation/lint failures and test fixture edits are superseded by the passing checks below, not independent review findings. No delegate or model review was requested/started.
+
+Actual checks (absolute cargo path throughout):
+
+- `cargo test -p metten --locked`: final **25 passed, 1 ignored**; the ignored native Keychain check was run separately. Covers offline signature verification for both RSA encodings and Ed25519, unsupported/malformed key refusal, strict/sanitized records, failed replacement/removal preservation, deterministic environment isolation, readback mismatch, exact fixed controls, actual local-peer outgoing subscription, redirect/body/frame rejection, full-queue/obsolete-generation cancellation, stopped retry, task/worker exit, retained unresponsive-worker ownership and explicit recovery. Replacement test verifies validation precedes revocation, the shared Kalshi task has actually exited before mutation, and Coinbase's fence remains current.
+- `cargo test --workspace --locked`: passed earlier in this step (**129 engine tests plus then-current 22 native tests**, two engine release-hour tests and one native explicit-only test omitted as intended). Later edits affect native code only; final native tests above supersede that native count. Existing two passing release-hour fixtures are reused for byte-identical engine code.
+- `cargo test -p metten --locked isolated_native_fixed_items -- --ignored --nocapture`: passed using only a newly created/deleted owned disposable file Keychain. Fixed demo/production item isolation, native duplicate refusal, whole-record update/read/delete and missing-delete outcomes passed. This is native adapter evidence, NOT packaged data-protection-Keychain evidence. No normal Keychain item was read or modified.
+- `cargo clippy -p metten --all-targets --locked -- -D warnings`: passed on final native code. `cargo fmt --all --check` and `git diff --check`: passed before final evidence-only edits.
+- `python3 tests/credential-runner.test.py`: passed its existing process recovery/retained-child/marker-output regression.
+- `npm run build`: initially blocked by absent installed `tsc`; `npm ci` installed the existing lockfile without modifying it, then build passed. No dependency upgrade was used to clear that failure.
+- `npm run tauri build -- --bundles app` with `/Users/connormoulton/.cargo/bin` in PATH: built the local release Mac bundle; the final incremental rebuild is recorded below. A build is not an interactive credential acceptance check.
+
+Packaged dummy check attempted with `swift scripts/verify-credential.swift target/release/bundle/macos/Metten.app`. **FAILED/BLOCKED** at its initial expected status `Local credential readability unchecked.`: the app rendered, but its WebKit content was absent from the native accessibility tree, so the runner could neither observe status nor drive its ordinary quit control. The runner correctly retained child/resource ownership instead of declaring cleanup. Used the supported native app connector's actual Quit Metten menu. The runner then observed late process exit, deleted its exact disposable Keychain/directory, and confirmed unchanged default/search-list metadata. A subsequent process inventory found no Metten test process. The failed walkthrough remains failed; late cleanup does not clear it. No repeated launch, force-kill, user-browser action or normal Keychain operation occurred.
+
+**Outstanding acceptance evidence:** the packaged provider-credential/bootstrap walkthrough cannot run through this app's current command surface: the approved sequence adds those commands and source-mode runner in step 5, which this task excludes. The direct disposable native adapter check is the strongest current substitute; it does not establish the production data-protection-store attributes/entitlements or packaged denial/prompt behavior. The existing dummy walkthrough is independently blocked by inaccessible WebKit controls. Next engineering action: repair/establish the isolated packaged accessibility/bootstrap route and complete those checks before accepting the changed native boundary. Do not silently treat unit tests or a bundle build as that proof.
+
+Additional limits: exact full request-manifest attempt ledger under every cancellation race, partial-frame/partial-send races, body-stream deadline failures, all handshake failure classifications, worker age/combined adapter allocation charging, and the full simultaneous 32 MiB accounting profile do not yet have the requested comprehensive evidence. Counters currently count admitted attempts, which can include a request canceled before confirmed transmission; they must not be reported as measured outgoing provider traffic. Socket reconstruction/reconnect orchestration, discovery coalescing/page counts, decoding and source-state integration remain unimplemented for step 4. No source-support, latency/capacity qualification, account entitlement, legal clearance or live acceptance follows. U1–U7 stay unresolved. **Do not mark step 3's complete verification gate passed or begin step 4 on this evidence.**
+
+Dependency review: Rust 1.100.0 stays pinned. Lock comparison removes/upgrades no existing `(name, version)` pair; 56 necessary transitive packages are added. Direct signing/transport identities: ed25519-dalek 2.2.0 (BSD-3-Clause), rsa 0.9.10 (MIT/Apache-2.0), sha2 0.10.9, base64 0.22.1, Tokio 1.54.1, reqwest 0.13.5 and tokio-tungstenite/tungstenite 0.30.0. Crypto PEM/SHA-256 and native-TLS/async features are selected in the native manifest, Tokio virtual-time features only for tests. `cargo metadata --locked` reviewed all 56 added package versions/licenses/MSRVs: MIT, Apache-2.0 and BSD alternatives; declared MSRVs <=1.85 (some crates omit an MSRV). This is compatibility/license inventory, not a security audit. No network/secret dependency or file changed in the engine crate.
+
+Primary mechanism sources consulted 2026-11-16, supplemented by exact downloaded source: [Tokio select cancellation](https://docs.rs/tokio/1.54.1/tokio/macro.select.html), [Tokio shutdown](https://tokio.rs/tokio/topics/shutdown), [reqwest ClientBuilder](https://docs.rs/reqwest/0.13.5/reqwest/struct.ClientBuilder.html), [tokio-tungstenite](https://docs.rs/tokio-tungstenite/0.30.0/tokio_tungstenite/), [Ed25519 signing/PKCS#8](https://docs.rs/ed25519-dalek/2.2.0/ed25519_dalek/struct.SigningKey.html), [RSA source](https://docs.rs/crate/rsa/0.9.10/source/src/pss/signing_key.rs), [Kalshi canonical signing/key types](https://docs.kalshi.com/getting_started/api_keys), [fixed WebSocket controls](https://docs.kalshi.com/websockets/websocket-connection), [BRTI indexlist action](https://docs.kalshi.com/websockets/cfbenchmarks-value), [Coinbase Exchange channels](https://docs.cdp.coinbase.com/exchange/websocket-feed/channels), [Kraken v2 trade](https://docs.kraken.com/exchange/api-reference/spot-websocket-v2/trade). Apple documentation page required JavaScript; inspected installed Security bindings and native behavior, but packaged protection semantics remain unverified. The RSA HTML documentation fetch failed; exact downloaded 0.9.10 source establishes digest-size PSS salt.
+
+Delivery guidance refresh at 2026-11-16 06:02:28 UTC again returned `fa3663624436e9e4df9d2b000d57f7f21e099786` on origin/main. No guidance change; reused consulted guidance. No commits/staging/push/PR/issue mutations; HEAD/index preserved. Unrelated docs/README and all proposal/review artifacts preserved.
+
+Tested native source identities (SHA-256; evidence/contract-only edits are outside these behavior hashes):
+
+- `Cargo.lock`: `82575c1298d20e259660d0efddce8deda3876bfed17b1c47ca29d662d7e5df86`
+- `src-tauri/Cargo.toml`: `933b0ca44b41e08a6f0b267ab2da68814914201834c47974a2d8c27df15d4264`
+- `src-tauri/src/main.rs`: `abe629bc4dc1ab6168947777d7084ad42df29147855f6f35a14e14fa65032a1f`
+- `src-tauri/src/provider_credential.rs`: `dc6930a4b58a798c88d4ddbf46a246d4425124862056bfc478e42e3747941836`
+- `src-tauri/src/providers/budget.rs`: `b96e949424f12c226f3b0336542cc4d310c75ab835009b89670ff99553ca655c`
+- `src-tauri/src/providers/mod.rs`: `9a5364f29eaae0da90d8bdc97e7370424c51614e9bc7572cc76eb3fc3722f067`
+- `src-tauri/src/providers/signing.rs`: `b78b1228adb1b5d26ddb3935657c19054f6f6322830b239fd21ce33f1f5b9be5`
+- `src-tauri/src/providers/tests.rs`: `5adc368ce584ec0dad23322d823715208f51f804f40c8456cd1027a283075286`
+- `src-tauri/src/providers/transport.rs`: `5f327f16c940a474060e9609c198ced0783660d1ee24a8b8ff6abe4c22387931`
+
+Final incremental bundle rebuild passed after the provider-specific cancellation/credential-stop changes: `target/release/bundle/macos/Metten.app`, 13.29 MiB; executable SHA-256 `f321b19c5f5217321c7487d491aeee40a95f38b0fa81b7d6b27c672eea5d16e6`. That rebuilt bundle was not relaunched; the failed accessibility walkthrough applies to the preceding build and is not relabeled as evidence for this one. Final fmt/whitespace checks pass; HEAD remains `875357ca1ab502d99b03b83193ed1e5526af9d51`, index empty, both approved-document hashes unchanged.
+
+## Step-3 completion continuation
+
+Owner explicitly invoked `implement` to finish step 3, including local commit
+authority. Published origin/main freshly queried again at continuation and remains
+fa3663624436e9e4df9d2b000d57f7f21e099786; reloaded root entry/discovery/maintainability,
+issue workflow, code map/contracts, glossary and applicable implement/TDD/review
+skills. No nested published instruction files; local standing instructions apply.
+Read-only tracker refresh: #5 open/no comments, #3/#4 closed. No authority for
+push/PR/account/provider calls. CI for a new local-only head cannot be observed
+without publication; it will be reported unavailable rather than inferred.
+
+Pre-agreed seams are native credentials, finite transport, intake/stop ownership
+and the isolated packaged process. Review base is the handoff's step-2 commit
+875357ca1ab502d99b03b83193ed1e5526af9d51. Expected remaining path: refund unused
+traffic reservations and count first-polled transport attempts; shared payload
+reservations/queue age; cancellation through fence revocation; controlled partial
+I/O, deadlines and failure classifications; packaged native credentials through
+the existing disposable target, without UI commands or data decoding.
+
+TDD: reservation regression initially failed to compile because its required
+Permit boundary did not exist; implemented refundable reservation/start accounting.
+The expired-work regression reproduced `Ok(())` from an already-expired deadline;
+fixed admission and completion checks. Controlled peers now verify real GET paths,
+failed/retried attempt counts, denial without retry, body-stream timeout, partial
+frame discard and partial control-send cancellation. Buffer permits survive
+queue/worker handoff, and stale intake is revoked. Recovery uses each message's
+actual fence rather than a worker's frozen startup array.
+
+The packaged native provider check passed on its first built candidate: actual
+save/duplicate refusal/replace/status/trusted signing/remove for both fixed
+environments, ack and actual process exit, output/file PEM-marker scans and owned
+cleanup with unchanged default/search-list metadata. It reuses the same validated
+Bootstrap and file-Keychain boundary; no generic secret read or ordinary-store
+lookup is added. Its early sources-mode process exits instead of connecting.
+
+The unchanged dummy UI walkthrough was retried once while investigating the
+accessibility limitation and failed at the same initial status: no WebKit content
+in its AX tree. An attempted owned-process accessibility request did not fix it
+and was removed. Supported native Quit menu closed only the owned app; runner
+confirmed late exit, owned Keychain/directory deletion and unchanged metadata.
+This remains failed/missing UI evidence, not a passing check. Packaged native
+provider verification is a separate implemented check, not a relabeling of that
+failure. No further UI launch will be repeated without new evidence.
+
+Required code review and final regression are pending in this continuation.
+
+### Required review: findings and corrections
+
+Review was against immutable staged trees: initial `4b902e5b39118d4afbddb3d13f52509f5f64968b`,
+then corrected `059779327eef547efad62c6233faf6f5975316b2`; base is step-2 commit
+875357c. WIP comparison uses `git diff <base> <tree>` (no new commit history),
+so review can precede the authorized final commit. No reviewer received another
+reviewer's first-pass findings.
+
+**Standards — Sol:** found cancellation cleanup skipped when a caller drops a
+public socket future, and provider-task exit leaving evidence current. Both
+reproduced in controlled public-boundary regressions before correction. Socket
+operation Drop guards now close/revoke; task lifetime guards revoke on return,
+panic or cancellation. Full affected-flow audit also covered worker exit/panic,
+which revokes the shared intake gate and requires joined recovery. Tests exercise
+outer-canceled receive/send, early/panicking providers and worker failure.
+
+**Standards — GLM:** first pass omitted required guidance and incorrectly claimed
+abort detached a handle. The exact timeout branch returns StillStopping before
+removal; a nonresponsive asynchronous-task regression proves ownership/recovery
+blocking until observed exit. Its fresh full-coverage pass confirmed the retained
+handle flow and read the omitted sources. Supported clarity fixes: share bounded
+wait and Bootstrap activation, remove a redundant control guard, document counter
+ordering and post-timeout rejoin, consolidate Quit failure handling. Suggestions
+for a generic retry abstraction are not required: one owned retry state now
+provides all pacing, while GET/handshake protocol-specific operations stay local.
+
+**Spec — Sol:** independently found the same caller-drop cancellation defect and
+accepted the narrowly stated packaged native isolation boundary. It explicitly
+did not establish ordinary data-protection-store/prompt/GUI acceptance.
+
+**Spec — DeepSeek:** verified the original numeric policy at design lines 354–358,
+and found the initial 20-token burst, 1/2-second retries, handshake bucket and
+pong accounting inconsistent with it. The lead had missed that detailed policy
+in the earlier source read; code and tests are now corrected to the approved
+50-token burst/10 tokens per second, at most two metadata operations, one handshake
+in flight/provider, five-second exponential retry start capped at 60 seconds,
+five-failure slow retry and 30-second sustained-usable reset. Request/handshake
+waits have ten-second total caps. Pongs/data messages and obsolete admission
+reasons have separate bounded accounting. The new runner mode now has process-only
+mode/bootstrap/acknowledgment failure regressions, not just the existing dummy
+self-test. The future provider-frame dispatcher protocol remains step 5.
+
+The 2-second raw queue-age ceiling is a provisional buffering limit, not a price
+lease; the 4-MiB per-socket reservation covers bounded frame, fragmented message,
+write and protocol/read headroom. These are the design's required finite ownership
+limits, with workload/actual allocation qualification still assigned to step 6.
+A new virtual-clock regression also reproduced deferred permits accumulating a
+later burst; reservation now holds capacity and actual start spends tokens, so
+unused reservations neither inflate counts nor bank future traffic.
+
+All four required roles ran (Sol Standards/Spec through the existing subscription;
+GLM and DeepSeek through configured free trial models). Reviews are static evidence,
+not runtime acceptance. A targeted correction review and final suite follow below.
+
+### Correction-flow review and final candidate
+
+A fresh Sol correction reviewer independently refreshed the same published entry
+and traced the entire changed credential/transport/budget/task/worker/runner flow
+in staged tree `1e9979d8546f6f57b2137c3dbba53a5c8a17ebe0`. It found no additional
+cleanup/ownership/isolation defect, but reproduced by source analysis a shared
+retry-admission gap: waiters could snapshot an earlier readiness time, and a
+successful slow-mode attempt did not claim its next minute. The lead removed
+snapshot-based admission. Actual attempt start now atomically rechecks and claims
+the shared Retry slot after connection-capacity admission, releasing the mutex
+before waits. Slow mode claims its next minute even after success, until the
+verified 30-second usability reset. Controlled concurrent-handshake and virtual
+slow-mode success regressions cover the complete failure class; GET and handshake
+use this same actual-start owner. No second retry loop or per-operation state
+reset remains.
+
+Final pre-regression native checks: 47 ordinary tests passed, one native test
+explicit-only; workspace Clippy passed. Runner process-only regression passed,
+including finite mode selection, exact bootstrap mode shape, rejected/late/closed
+acknowledgments and retained child/output cleanup. Initial closed-peer setup
+failed its socket-deadline operation before reading EOF; that is now the same
+finite private-channel failure category, still refusing acknowledgment/success.
+No check was weakened to accept a failed child or missing exit.
+
+Source/profile rationale is explicit: 2-second raw buffering is provisional and
+unrelated to provider freshness; socket charge reserves frame/fragmented-message/
+write bounds plus 1 MiB protocol headroom. The shared payload ceiling remains
+32 MiB, and decoded-state/real-workload qualification remains in steps 4/6.
+Counters distinguish REST polls, handshakes, subscription controls, necessary
+pongs and complete incoming data messages (not a claim to inspect TLS packets or
+physical fragmented-frame counts). Default route cost 10 remains the documented
+conservative default, not an account/IP guarantee; the primary Kalshi rate-limit
+page was freshly consulted again and confirms public/IP limits and potentially
+missing/lagged headers. Account-specific limit/cost inspection is not authorized.
+
+All supported review findings are resolved by the accountable lead. Clarity
+corrections and the final retry correction are lead-verified; the static reviewer
+reports are not relabeled as a fresh four-model review of later source. No review
+score is used as completion evidence. The final applicable suite, packaged native
+check, staged snapshot and exact commit receipt follow.
+
+## Final step-3 receipt and limits
+
+**Completed:** the bounded protected-credential/read-only transport foundation,
+controlled regressions, required review and final applicable local checks. No
+provider data decoding/reconstruction, source/evaluator integration, source UI/IPC,
+account calls, trading or calibration was started. Original issue #5 remains open
+with its broader acceptance unmet. U1–U7 remain unresolved.
+
+The two-axis roster completed: Standards Sol + GLM and Spec Sol + DeepSeek, with
+the additional targeted Sol correction-flow review documented above. Supported
+findings were consolidated, traced through the complete affected paths, corrected
+and regression-tested. Standards: caller-drop cleanup and unexpected task exit
+were the consequential findings; Spec: cancellation and explicit budget/retry/
+runner accounting mismatches were corrected. The unsupported detached-handle
+claim was rejected against source and a nonresponsive-task regression, then the
+GLM follow-up confirmed the retained ownership flow. No score or consensus is
+used as runtime proof.
+
+After the targeted review, actual attempt admission was made atomic under the
+shared provider Retry owner, after capacity admission. It rechecks updated backoff
+and claims the next paced slot, including successful slow-mode attempts; no mutex
+is held across network or timer waits. The new queued-handshake controlled-peer
+regression and virtual-clock slow-success regression pass. This last correction
+was lead-verified with the full suite, not relabeled as a new four-reviewer pass.
+
+Final local checks on byte-identical behavior sources:
+
+- `python3 tests/credential-runner.test.py`: **passed**, including new finite mode/
+  bootstrap/acknowledgment regressions plus existing output/retained-exit cleanup.
+- `python3 tests/check-staged.test.py`: **5 passed**.
+- `npm run check`: TypeScript passed; **12 UI/VM tests passed**.
+- `npm run build`: passed.
+- `cargo fmt --all --check`: passed.
+- `cargo test --workspace --locked`: **176 ordinary tests passed** (47 native +
+  129 engine); one explicit-only native test and two release-only engine fixtures
+  omitted in this ordinary run. No failed test was treated as cleared by a later
+  unrelated command.
+- `cargo test -p metten-engine --release --locked --test strategy -- --ignored --nocapture`:
+  **both fixtures passed**; allocated_bytes=65988608 each, elapsed 4339/4801 ms.
+  Controlled engine fixture measurements are not native/provider qualification.
+- `cargo clippy --workspace --all-targets --locked -- -D warnings`: passed.
+- `npm run tauri build -- --bundles app`: passed; local arm64 bundle **13.64 MiB**.
+- Explicit `isolated_native_fixed_items` ignored-test invocation: passed on a
+  freshly owned disposable Keychain, with cleanup.
+- Fresh finished-bundle invocation of `swift scripts/verify-credential.swift
+  --provider-credentials target/release/bundle/macos/Metten.app`: **passed**,
+  native operations/signature verification/ack, separately observed process exit,
+  marker scans, exact owned Keychain/directory deletion and unchanged global
+  default/search-list metadata. No Metten test process remains.
+
+Finished executable SHA-256:
+`cca5bb1a59163d58aff81af98ef8891858375e24ce8228567a9b1c6393345de8`.
+
+Mixed-work checkpoint check:
+
+`env CARGO_TARGET_DIR=<selected-worktree>/target python3 scripts/check-staged.py
+sh -c 'npm ci && npm run build && /Users/connormoulton/.cargo/bin/cargo test --workspace --locked'`
+
+passed against immutable staged tree **9bea789612987bee568761a2556f562f7e90f11d**.
+It exported tracked/staged source into a disposable folder, installed the existing
+locked frontend dependencies, built its assets and passed all 176 ordinary Rust
+tests without any unstaged proposal/code dependency. The real index/worktree were
+preserved. Afterward only this receipt/current index and owning documentation
+wording changed; source/dependency/test blobs are verified identical before commit.
+
+**Evidence limits, not waived checks:** the existing dummy GUI walkthrough failed
+because this Mac's external AX tree exposes no WebKit controls. The bounded retry
+and exact late cleanup are recorded above. The new packaged native check supplies
+actual changed-boundary evidence through the prescribed validated disposable
+Keychain seam, without pretending that GUI test passed. Ordinary data-protection
+Keychain entitlements/prompt/refusal behavior in a distributed app is not proven
+by the file-Keychain seam. Step 5's full source/frame/renderer walkthrough remains
+future work. Provider access/rights, actual delivery, live acceptance, capacity
+qualification and legal clearance remain unverified. No controlled result grants
+real-account authority.
+
+Remote CI for the new local-only head is **unverified/not published**: Foundation
+checks are triggered by push/pull_request, while owner authority here permits a
+local commit only. The equivalent local configured suite passed; that is not a
+claim that GitHub CI ran. No lint/typecheck gate is unwired: configured TypeScript,
+Rust formatting and workspace Clippy all ran. No push/PR/deployment was attempted.
+
+Delivery freshness query at 2026-11-16 15:03:51 UTC returned origin/main guidance
+**fa3663624436e9e4df9d2b000d57f7f21e099786**, unchanged from the loaded baseline;
+therefore no applicable guidance/review repeat was required. Rust remains pinned
+to 1.100.0. Existing dependency version pairs were preserved; the earlier exact
+added-version/license inventory remains applicable.
+
+Final native behavior/dependency SHA-256 identities:
+
+- `Cargo.lock`: `82575c1298d20e259660d0efddce8deda3876bfed17b1c47ca29d662d7e5df86`
+- `src-tauri/Cargo.toml`: `933b0ca44b41e08a6f0b267ab2da68814914201834c47974a2d8c27df15d4264`
+- `src-tauri/src/main.rs`: `c3c494d0cd0673720455ce7c9241baeeee1376111cb053749884b449109d0b54`
+- `src-tauri/src/credential.rs`: `8ea2ec329da6fc68d5896806dbbaf62bc1488a4f06e2cce32298ddc98f0092fe`
+- `src-tauri/src/provider_credential.rs`: `09a54c390739e87be6292ce25a9079d8cd42570ec9e24228bcb9a590c34037b1`
+- `src-tauri/src/providers/budget.rs`: `8a7c20e01782adfac54ad705101be83b261184c8bf677d449167e5f5af816682`
+- `src-tauri/src/providers/memory.rs`: `46449f0cba81174cc9985b36930698f22c141eca9e25bccc2fa63fc9364c8460`
+- `src-tauri/src/providers/mod.rs`: `d7e6aa84dd4941477aaa35345a56ced7c09ea931f49e2f75e71840f5fae270c1`
+- `src-tauri/src/providers/signing.rs`: `b78b1228adb1b5d26ddb3935657c19054f6f6322830b239fd21ce33f1f5b9be5`
+- `src-tauri/src/providers/tests.rs`: `4fb72f758ed8948143bfc4b82885f388ec9cfef939de56ade3f6630e0b50d012`
+- `src-tauri/src/providers/transport.rs`: `6d71f4e2c167e43fe2405681898312c607ebfafbbc387826427c3a32b8976d11`
+- `scripts/verify-credential.swift`: `5fda0ac5f17fc9619e691f03901aa49bd5b7a1e536abb2a7bd6e6c8bd05f81a3`
+- `tests/credential-runner.test.py`: `abe333bc6596f8a9cf725277d60ecbb83320a5ba9bdc51b5cbf21c69ced24635`

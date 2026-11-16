@@ -35,14 +35,22 @@ const LOCKED: &str =
 const CHANNEL: &str =
     "Verification unavailable — prepare one fresh expectation in the runner, then retry.";
 
+#[derive(Deserialize, PartialEq)]
+#[serde(rename_all = "snake_case")]
+enum VerificationMode {
+    Dummy,
+    Sources,
+}
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
-struct Bootstrap {
+pub(crate) struct Bootstrap {
     path: PathBuf,
     device: u64,
     inode: u64,
     password: String,
     session: String,
+    #[serde(default)]
+    mode: Option<VerificationMode>,
 }
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -201,7 +209,7 @@ impl Bootstrap {
         }
         Ok(())
     }
-    fn record_native_write(&mut self) -> Result<(), &'static str> {
+    pub(crate) fn record_native_write(&mut self) -> Result<(), &'static str> {
         // Security atomically replaces file-Keychains on successful writes.
         // Accept a new file identity only immediately after our own successful API call.
         let file = std::fs::symlink_metadata(&self.path).map_err(|_| UNAVAILABLE)?;
@@ -215,7 +223,24 @@ impl Bootstrap {
         self.inode = file.ino();
         self.validate()
     }
-    fn open(&self) -> Result<CFType, &'static str> {
+    fn activate(&mut self) -> Result<(), &'static str> {
+        if !(32..=128).contains(&self.password.len()) || self.session.len() != 32 {
+            return Err(UNAVAILABLE);
+        }
+        let keychain = self.open()?;
+        unsafe {
+            map_status(SecKeychainUnlock(
+                keychain.as_CFTypeRef() as _,
+                self.password.len() as u32,
+                self.password.as_ptr().cast(),
+                1,
+            ))?;
+        }
+        unlocked(&keychain)?;
+        self.password = String::new();
+        Ok(())
+    }
+    pub(crate) fn open(&self) -> Result<CFType, &'static str> {
         self.validate()?;
         let path =
             CString::new(self.path.as_os_str().as_encoded_bytes()).map_err(|_| UNAVAILABLE)?;
@@ -269,23 +294,10 @@ impl Credentials {
                 .map_err(|_| UNAVAILABLE)?;
             let mut target: Bootstrap =
                 serde_json::from_slice(&frame(&mut stream)?).map_err(|_| UNAVAILABLE)?;
-            if target.password.len() < 32
-                || target.password.len() > 128
-                || target.session.len() != 32
-            {
+            if target.mode == Some(VerificationMode::Sources) {
                 return Err(UNAVAILABLE);
             }
-            let keychain = target.open()?;
-            unsafe {
-                map_status(SecKeychainUnlock(
-                    keychain.as_CFTypeRef() as _,
-                    target.password.len() as u32,
-                    target.password.as_ptr().cast(),
-                    1,
-                ))?;
-            }
-            unlocked(&keychain)?;
-            target.password = String::new();
+            target.activate()?;
             Ok((target, stream))
         })();
         let verifier = Arc::new(Mutex::new(Verifier::default()));
@@ -419,7 +431,7 @@ impl Credentials {
         }
     }
 }
-fn unlocked(keychain: &CFType) -> Result<(), &'static str> {
+pub(crate) fn unlocked(keychain: &CFType) -> Result<(), &'static str> {
     let mut status = 0;
     unsafe {
         map_status(SecKeychainGetStatus(
@@ -429,6 +441,46 @@ fn unlocked(keychain: &CFType) -> Result<(), &'static str> {
     }
     if status & 1 == 0 { Err(LOCKED) } else { Ok(()) }
 }
+// The step-3 packaged check consumes the same private descriptor and validated
+// disposable target, before ordinary startup; it never creates a renderer command.
+pub(crate) fn provider_check() -> Option<i32> {
+    if std::env::var("METTEN_PROVIDER_CHECK").ok().as_deref() != Some("1") {
+        return None;
+    }
+    let result = (|| -> Result<(), &'static str> {
+        if std::env::var("METTEN_VERIFY_FD").ok().as_deref() != Some("3") {
+            return Err(UNAVAILABLE);
+        }
+        let mut stream = unsafe { UnixStream::from_raw_fd(3) };
+        stream.peer_addr().map_err(|_| UNAVAILABLE)?;
+        let mut target: Bootstrap =
+            serde_json::from_slice(&frame(&mut stream)?).map_err(|_| UNAVAILABLE)?;
+        if target.mode != Some(VerificationMode::Sources) {
+            return Err(UNAVAILABLE);
+        }
+        target.activate()?;
+        crate::provider_credential::verify_packaged(target).map_err(|_| UNAVAILABLE)?;
+        stream.write_all(&[1]).map_err(|_| UNAVAILABLE)?;
+        Ok(())
+    })();
+    Some(if result.is_ok() { 0 } else { 1 })
+}
+#[cfg(test)]
+impl Bootstrap {
+    pub(crate) fn fixture(path: PathBuf) -> Self {
+        let path = path.canonicalize().unwrap();
+        let m = std::fs::metadata(&path).unwrap();
+        Self {
+            path,
+            device: m.dev(),
+            inode: m.ino(),
+            password: String::new(),
+            session: String::new(),
+            mode: None,
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -437,6 +489,22 @@ mod tests {
             target: Mutex::new(None),
             verifier: Arc::new(Mutex::new(Verifier::default())),
             operation: Mutex::new(()),
+        }
+    }
+    #[test]
+    fn bootstrap_modes_are_finite_strict_and_default_to_dummy() {
+        let fields = r#""path":"/invalid","device":1,"inode":1,"password":"controlled","session":"controlled""#;
+        let parse =
+            |extra: &str| serde_json::from_str::<Bootstrap>(&format!("{{{fields}{extra}}}"));
+        assert!(parse("").unwrap().mode.is_none());
+        assert!(parse(",\"mode\":\"dummy\"").unwrap().mode == Some(VerificationMode::Dummy));
+        assert!(parse(",\"mode\":\"sources\"").unwrap().mode == Some(VerificationMode::Sources));
+        for bad in [
+            ",\"mode\":\"unknown\"",
+            ",\"mode\":\"sources\",\"mode\":\"dummy\"",
+            ",\"extra\":1",
+        ] {
+            assert!(parse(bad).is_err());
         }
     }
     #[test]
@@ -506,6 +574,7 @@ mod tests {
             inode: metadata.ino(),
             password: String::new(),
             session: String::new(),
+            mode: None,
         };
         assert!(target.validate().is_ok());
         let alias = directory.join("alias");

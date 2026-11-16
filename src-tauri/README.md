@@ -85,3 +85,9 @@ unchanged behavior. The issue #4 record separately documents local strategy impo
 notarization, upgrade identity continuity, other Macs, power-loss durability,
 runtime compromise protection, future exports/backups, and trading remain outside
 that proof. The credential adapter uses deprecated file-Keychain lifecycle APIs.
+
+The native [step-3 foundation contract](src/README.md#step-3-provider-foundation)
+now describes fixed provider credentials, signing, read-only transport and the
+provider shutdown phase before the existing guarded save. Commands/permissions,
+UI, dummy item and SQLite remain unchanged. Building a bundle does not verify
+provider Keychain behavior inside that bundle; see the issue #5 evidence limits.

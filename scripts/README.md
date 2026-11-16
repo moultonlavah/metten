@@ -8,7 +8,7 @@ The current non-trading package checklist, prerequisites, artifact identity, con
 
 ## Overview
 
-[verify-credential.swift](verify-credential.swift) is the dummy-only packaged-app runner for issue #3. It is a verification tool, not part of the trading engine. Its completed evidence and limitations are in [issue-3.md](../docs/verification/issue-3.md); process-only regression checks are described in [tests](../tests/README.md).
+[verify-credential.swift](verify-credential.swift) owns the default dummy packaged-app walkthrough for issue #3 and the explicit native provider check for step 3 of issue #5. It is a verification tool, not part of the trading engine. Its completed evidence and limitations are in [issue-3.md](../docs/verification/issue-3.md); process-only regression checks are described in [tests](../tests/README.md).
 
 ## Interface
 
@@ -33,3 +33,16 @@ Normal execution launches Metten repeatedly, creates two disposable Keychains an
 ## Verification
 
 `python3 tests/credential-runner.test.py` compiles this runner and exercises the process-only self-test. The separate packaged invocation is documented in [issue-3.md](../docs/verification/issue-3.md). Do not rerun packaged credential verification for ordinary documentation-only changes. An explicitly requested checklist execution, such as issue #31, records fresh artifact/environment evidence and distinguishes it from earlier bounded results.
+
+## Packaged provider credential check (step 3)
+
+`swift scripts/verify-credential.swift --provider-credentials target/release/bundle/macos/Metten.app`
+uses the same owned-process/private-descriptor/disposable-Keychain/cleanup machinery.
+It needs no renderer/Accessibility interaction: the finished executable validates
+a strict sources-mode bootstrap, performs finite controlled provider credential
+operations and verifies a local signature, acknowledges completion, and exits.
+The runner separately confirms exit, scans outputs/files for private-key PEM
+markers and dummy values, and verifies unchanged global Keychain metadata.
+Invalid bootstrap fails closed before ordinary startup. It never connects to a
+provider or reads ordinary credential items. This is not the step-5 source-frame
+walkthrough. Default dummy UI mode remains separate, including its prompt checks.

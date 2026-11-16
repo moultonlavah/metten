@@ -2,6 +2,10 @@
 
 #[cfg(target_os = "macos")]
 mod credential;
+#[cfg(target_os = "macos")]
+mod provider_credential;
+#[cfg(target_os = "macos")]
+mod providers;
 
 use metten_engine::{Action, Engine, Snapshot};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -11,6 +15,11 @@ struct Workspace {
     engine: Result<Engine, String>,
     #[cfg(target_os = "macos")]
     credentials: credential::Credentials,
+    #[cfg(target_os = "macos")]
+    providers: std::sync::Mutex<Option<providers::Coordinator>>,
+    #[cfg(target_os = "macos")]
+    provider_credentials:
+        std::sync::Mutex<provider_credential::Credentials<provider_credential::native::Keychain>>,
     strategy_operation: std::sync::Arc<StrategyAdmission>,
     quitting: AtomicBool,
     exit_ready: AtomicBool,
@@ -178,38 +187,76 @@ fn begin_quit(app: &tauri::AppHandle) {
     if workspace.quitting.swap(true, Ordering::SeqCst) {
         return;
     }
+    #[cfg(target_os = "macos")]
+    let mut source = workspace
+        .providers
+        .lock()
+        .expect("provider owner poisoned")
+        .take()
+        .expect("quit owns provider shutdown");
+    #[cfg(target_os = "macos")]
+    let deadline = {
+        source.revoke();
+        tokio::time::Instant::now() + providers::SHUTDOWN
+    };
     let app = app.clone();
-    tauri::async_runtime::spawn_blocking(move || {
-        let workspace = app.state::<Workspace>();
-        wait_for_strategy(&workspace.strategy_operation);
+    tauri::async_runtime::spawn(async move {
         #[cfg(target_os = "macos")]
-        let _credential_operation = workspace
-            .credentials
-            .operation
-            .lock()
-            .expect("credential operation mutex poisoned");
-        let result = workspace
-            .engine
-            .as_ref()
-            .map_or(Ok(()), Engine::stop_and_save);
-        match result {
-            Ok(()) => {
-                workspace.exit_ready.store(true, Ordering::SeqCst);
-                app.exit(0);
-            }
-            Err(error) => {
-                *workspace
-                    .quit_error
-                    .lock()
-                    .expect("quit error state poisoned") = Some(error);
-                workspace.quitting.store(false, Ordering::SeqCst);
-                if let Some(window) = app.get_webview_window("main") {
-                    let _ = window.show();
-                    let _ = window.set_focus();
-                }
+        {
+            let result = source.shutdown(deadline).await;
+            let workspace = app.state::<Workspace>();
+            *workspace.providers.lock().expect("provider owner poisoned") = Some(source);
+            if result.is_err() {
+                retain_quit_failure(
+                    &app,
+                    "Data intake stopped — shutdown could not be confirmed.".into(),
+                );
+                return;
             }
         }
+        let _ = tauri::async_runtime::spawn_blocking(move || {
+            let workspace = app.state::<Workspace>();
+            wait_for_strategy(&workspace.strategy_operation);
+            #[cfg(target_os = "macos")]
+            let _credential_operation = workspace
+                .credentials
+                .operation
+                .lock()
+                .expect("credential operation mutex poisoned");
+            #[cfg(target_os = "macos")]
+            let _provider_credentials = workspace
+                .provider_credentials
+                .lock()
+                .expect("provider credential owner poisoned");
+            let result = workspace
+                .engine
+                .as_ref()
+                .map_or(Ok(()), Engine::stop_and_save);
+            match result {
+                Ok(()) => {
+                    workspace.exit_ready.store(true, Ordering::SeqCst);
+                    app.exit(0);
+                }
+                Err(error) => {
+                    retain_quit_failure(&app, error);
+                }
+            }
+        })
+        .await;
     });
+}
+
+fn retain_quit_failure(app: &tauri::AppHandle, error: String) {
+    let workspace = app.state::<Workspace>();
+    *workspace
+        .quit_error
+        .lock()
+        .expect("quit error state poisoned") = Some(error);
+    workspace.quitting.store(false, Ordering::SeqCst);
+    if let Some(window) = app.get_webview_window("main") {
+        let _ = window.show();
+        let _ = window.set_focus();
+    }
 }
 
 fn context() -> tauri::Context<tauri::Wry> {
@@ -217,6 +264,10 @@ fn context() -> tauri::Context<tauri::Wry> {
 }
 
 fn main() {
+    #[cfg(target_os = "macos")]
+    if let Some(code) = credential::provider_check() {
+        std::process::exit(code);
+    }
     tauri::Builder::default()
         .menu(|app| {
             let menu = tauri::menu::Menu::default(app)?;
@@ -247,7 +298,7 @@ fn main() {
                 std::fs::create_dir_all(&directory).map_err(|e| format!("Cannot open workspace. Check disk space and folder permissions, then reopen. {e}"))?;
                 Engine::open(directory.join("session.sqlite"))
             })();
-            app.manage(Workspace { engine, #[cfg(target_os = "macos")] credentials: credential::Credentials::setup(), strategy_operation: std::sync::Arc::new(StrategyAdmission::default()), quitting: AtomicBool::new(false), exit_ready: AtomicBool::new(false), quit_error: std::sync::Mutex::new(None) });
+            app.manage(Workspace { engine, #[cfg(target_os = "macos")] credentials: credential::Credentials::setup(), #[cfg(target_os = "macos")] providers: std::sync::Mutex::new(Some(providers::Coordinator::new())), #[cfg(target_os = "macos")] provider_credentials: std::sync::Mutex::new(provider_credential::Credentials::new(provider_credential::native::Keychain::local())), strategy_operation: std::sync::Arc::new(StrategyAdmission::default()), quitting: AtomicBool::new(false), exit_ready: AtomicBool::new(false), quit_error: std::sync::Mutex::new(None) });
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![snapshot, control, credential, strategies])

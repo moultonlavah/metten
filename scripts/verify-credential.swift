@@ -48,6 +48,22 @@ var outputReadFailed = false
 let a = "metten-dummy-" + UUID().uuidString
 let b = "metten-dummy-" + UUID().uuidString
 let password = UUID().uuidString + UUID().uuidString
+func providerMode(_ arguments: [String]) throws -> Bool {
+    if arguments.count == 2 && arguments[0] == "--provider-credentials" { return true }
+    try require(arguments.count == 1 && !arguments[0].hasPrefix("--"),"supply finished .app path or --provider-credentials .app")
+    return false
+}
+func bootstrap(_ targetPath: String, _ device: Any, _ inode: Any, providerCheck: Bool) -> [String:Any] {
+    var value: [String:Any] = ["path":targetPath,"device":device,"inode":inode,"password":password,"session":session]
+    if providerCheck { value["mode"] = "sources" }; return value
+}
+func providerAck(timeout: TimeInterval = 10) throws {
+    try require(timeout > 0 && timeout <= 10,"invalid acknowledgment deadline")
+    var duration = timeval(tv_sec:Int(timeout),tv_usec:Int32((timeout - floor(timeout))*1_000_000))
+    try require(setsockopt(socket,SOL_SOCKET,SO_RCVTIMEO,&duration,socklen_t(MemoryLayout<timeval>.size)) == 0,"packaged provider native check failed or timed out")
+    var ack: UInt8 = 0
+    try require(read(socket,&ack,1) == 1 && ack == 1,"packaged provider native check failed or timed out")
+}
 func send(_ object: [String: Any]) throws {
     // A closed app connection must throw so owned-state cleanup still runs.
     var noSigPipe: Int32 = 1
@@ -214,6 +230,29 @@ func recoverySelfTest() throws {
     }
     close(socket); socket = -1
     print("PASS: closed private channel write caught without terminating runner")
+    try require(try !providerMode(["test.app"]),"dummy mode changed")
+    try require(try providerMode(["--provider-credentials","test.app"]),"provider mode unavailable")
+    for arguments in [[],["--provider-credentials"],["--unknown","test.app"],["--provider-credentials","test.app","extra"]] {
+        do { _ = try providerMode(arguments); throw Failure(message:"invalid runner mode accepted") }
+        catch let error as Failure { try require(error.message != "invalid runner mode accepted","invalid runner mode accepted") }
+    }
+    let dummyBootstrap = bootstrap("controlled",1,2,providerCheck:false)
+    let providerBootstrap = bootstrap("controlled",1,2,providerCheck:true)
+    try require(dummyBootstrap["mode"] == nil && dummyBootstrap.count == 5 && providerBootstrap["mode"] as? String == "sources" && providerBootstrap.count == 6,"bootstrap mode shape changed")
+    var acknowledgments: [Int32] = [-1,-1]
+    try require(socketpair(AF_UNIX,SOCK_STREAM,0,&acknowledgments) == 0,"acknowledgment self-test socket failed")
+    socket = acknowledgments[0]
+    var ack: UInt8 = 1; try require(write(acknowledgments[1],&ack,1) == 1,"acknowledgment self-test write failed"); try providerAck(timeout:0.02)
+    ack = 0; try require(write(acknowledgments[1],&ack,1) == 1,"acknowledgment self-test write failed")
+    for _ in 0..<2 {
+        do { try providerAck(timeout:0.02); throw Failure(message:"bad or late acknowledgment accepted") }
+        catch let error as Failure { try require(error.message == "packaged provider native check failed or timed out","bad acknowledgment result changed") }
+    }
+    close(acknowledgments[1])
+    do { try providerAck(timeout:0.02); throw Failure(message:"closed acknowledgment accepted") }
+    catch let error as Failure { try require(error.message == "packaged provider native check failed or timed out","closed acknowledgment result changed: " + error.message) }
+    close(socket); socket = -1
+    print("PASS: provider mode, bootstrap shape, rejected/late/closed acknowledgments")
     func spawn(_ executable: String, arguments: [String] = []) throws -> Int32 {
         var input: [Int32] = [-1,-1]
         try require(pipe(&input) == 0 && pipe(&outputPipe) == 0,"self-test pipe failed")
@@ -263,7 +302,7 @@ func recoverySelfTest() throws {
     try require(outputPipe == [-1,-1] && child == 0,"self-test noisy child not cleaned up")
     print("PASS: noisy child exited within deadline; all output captured and markers rejected")
 }
-func launch(_ bundle: URL, _ directory: URL, _ target: SecKeychain, isolatedSetup: Bool = true) throws {
+func launch(_ bundle: URL, _ directory: URL, _ target: SecKeychain, isolatedSetup: Bool = true, providerCheck: Bool = false) throws {
     let info = try PropertyListSerialization.propertyList(from: Data(contentsOf:bundle.appendingPathComponent("Contents/Info.plist")),format:nil) as! [String:Any]
     let executable = bundle.appendingPathComponent("Contents/MacOS/" + (info["CFBundleExecutable"] as! String)).path
     var pair: [Int32] = [-1,-1]; try require(socketpair(AF_UNIX,SOCK_STREAM,0,&pair) == 0,"socketpair failed")
@@ -280,6 +319,7 @@ func launch(_ bundle: URL, _ directory: URL, _ target: SecKeychain, isolatedSetu
     let args = [strdup(executable),nil]
     var environment = ProcessInfo.processInfo.environment
     if isolatedSetup { environment["METTEN_VERIFY_FD"] = "3" } else { environment.removeValue(forKey:"METTEN_VERIFY_FD") }
+    if providerCheck { environment["METTEN_PROVIDER_CHECK"] = "1" } else { environment.removeValue(forKey:"METTEN_PROVIDER_CHECK") }
     environment["METTEN_TEST_WORKSPACE"] = directory.appendingPathComponent("workspace").path
     let env = environment.map { strdup($0.key + "=" + $0.value) } + [nil]
     defer { args.forEach { free($0) }; env.forEach { free($0) } }
@@ -290,11 +330,17 @@ func launch(_ bundle: URL, _ directory: URL, _ target: SecKeychain, isolatedSetu
     session = UUID().uuidString.replacingOccurrences(of:"-",with:"").lowercased(); sequence = 0
     let targetPath = try path(target)
     let attrs = try fm.attributesOfItem(atPath:targetPath)
-    if isolatedSetup { try send(["path":targetPath,"device":attrs[.systemNumber]!,"inode":attrs[.systemFileNumber]!,"password":password,"session":session]) }
+    if isolatedSetup { try send(bootstrap(targetPath,attrs[.systemNumber]!,attrs[.systemFileNumber]!,providerCheck:providerCheck)) }
+    if providerCheck {
+        try providerAck()
+        try require(try waitForChildExit(timeout:10),"packaged provider process did not exit")
+        print("PASS: packaged native provider save/duplicate/replace/fixed-read/sign/remove and process exit")
+        return
+    }
     try waitText("Local credential readability unchecked.")
 }
 func scan(_ directory: URL) throws {
-    let markers = [Data(a.utf8),Data(b.utf8)]
+    let markers = [Data(a.utf8),Data(b.utf8),Data("-----BEGIN PRIVATE KEY-----".utf8),Data("-----BEGIN RSA PRIVATE KEY-----".utf8)]
     try require(!markers.contains(where: { collected.range(of:$0) != nil }), "marker in captured output")
     for case let file as URL in fm.enumerator(at:directory,includingPropertiesForKeys:[.isRegularFileKey])! {
         if (try file.resourceValues(forKeys:[.isRegularFileKey])).isRegularFile == true {
@@ -379,9 +425,9 @@ func waitAccessRefusal() throws {
     throw Failure(message:"actual prompt refusal did not produce a fixed access-refusal status")
 }
 func run() throws {
-    try require(AXIsProcessTrusted(),"BLOCKED: native runner requires Accessibility permission")
-    try require(CommandLine.arguments.count == 2,"supply finished .app path only")
-    let bundle = URL(fileURLWithPath:CommandLine.arguments[1]).standardizedFileURL
+    let providerCheck = try providerMode(Array(CommandLine.arguments.dropFirst()))
+    try require(providerCheck || AXIsProcessTrusted(),"BLOCKED: native runner requires Accessibility permission")
+    let bundle = URL(fileURLWithPath:CommandLine.arguments[providerCheck ? 2 : 1]).standardizedFileURL
     let before = try metadata(); baselineMetadata = before
     var directory = URL(fileURLWithPath:NSTemporaryDirectory()).appendingPathComponent("metten-credential-" + UUID().uuidString).resolvingSymlinksInPath()
     try fm.createDirectory(at:directory,withIntermediateDirectories:false,attributes:[.posixPermissions:0o700]); ownedDirectory = directory
@@ -394,6 +440,12 @@ func run() throws {
     owned = target // Record ownership immediately after creation, before validation.
     try require(try path(target!) == targetPath,"unexpected owned Keychain path")
     try require(try metadata() == before,"isolation changed during creation")
+    if providerCheck {
+        try launch(bundle,directory,target!,providerCheck:true)
+        try scan(directory)
+        try require(try metadata() == before,"isolation changed during provider check")
+        return
+    }
     try launch(bundle,directory,target!)
     let originalPath = try path(target!)
     let originalAttrs = try fm.attributesOfItem(atPath:originalPath)
@@ -495,6 +547,7 @@ if CommandLine.arguments.dropFirst() == ["--output-child"] {
 }
 if CommandLine.arguments.dropFirst() == ["--self-test"] {
     do { try recoverySelfTest(); exit(0) }
+    catch let error as Failure { print("FAIL: process-only recovery self-test: " + error.message); exit(1) }
     catch { print("FAIL: process-only recovery self-test"); exit(1) }
 }
 var failed = false

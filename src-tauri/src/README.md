@@ -4,7 +4,7 @@
 
 [main.rs](./main.rs) owns Tauri startup, the native-selected workspace, screen
 commands, and guarded exit. [credential.rs](./credential.rs) is the Mac-only,
-dummy-only Security adapter. The shared engine remains the source of session and
+dummy Security adapter and validated disposable-bootstrap seam. The shared engine remains the source of session and
 recording truth; this bridge is not a trading engine or provider integration.
 See the [desktop package contract](../README.md) for build, permissions, icons,
 configuration, and evidence limits. Completed issue #4 adds local strategy
@@ -111,3 +111,98 @@ tests and from the controlled queued-command test. Reuse its recorded evidence
 only for unchanged behavior; no test, build, launch, or credential operation was
 performed for these README additions. See [issue #2](../../docs/verification/issue-2.md)
 for the retained non-trading session and failed-save/retry evidence.
+
+## Step-3 provider foundation
+
+[provider_credential.rs](provider_credential.rs) owns strict version-1 fixed-item
+Kalshi records, supported key validation, nonsecret status and fixed-item readback.
+The ordinary store uses the data-protection Keychain with synchronizing disabled
+and WhenUnlockedThisDeviceOnly protection. The separate dummy adapter is unchanged.
+No provider credential IPC command is registered yet. Native callers must serialize
+credential/connection admission and move exclusive ownership to the native blocking
+worker. `Credentials::change` validates before revocation, stops/joins the shared
+Kalshi/BRTI task through the existing Tauri runtime, and only then mutates the fixed
+item. Other provider fences stay current. A timeout retains the task and refuses
+mutation. Do not invoke this blocking interface under a shared lock or on an async
+runtime thread. Command admission is deferred to step 5.
+
+[providers/mod.rs](providers/mod.rs) owns three fixed provider task slots, one
+optional worker, a single-slot raw intake queue, independent generation fences
+and a stop signal outside the queue. Consumers must recheck the relevant fence
+before publication. No provider decoder or connection to the engine exists yet.
+The worker consumer must perform bounded work; a nonresponsive worker retains
+its handle and blocks successful shutdown. A fresh owner cannot revive an old fence.
+
+[providers/transport.rs](providers/transport.rs) owns a pooled fixed-environment
+HTTPS client and fixed TLS WebSocket destinations. GET routes and control messages
+are finite Rust enums; account reads, purchase routes and arbitrary URLs/methods
+are absent. Redirects, proxies and library HTTP retries are disabled. The local
+loopback connector exists only under cfg(test). Interrupted send/receive drops
+the socket and revokes its fence; it cannot resume partial protocol work.
+[signing.rs](providers/signing.rs) parses Ed25519 PKCS#8 and 2048-bit RSA
+PKCS#1/PKCS#8, with canonical GET/path/timestamp signatures. No secret types
+implement serialization or Debug for transport/status output.
+
+[budget.rs](providers/budget.rs) limits each provider's local traffic: REST
+capacity 50 tokens, refill 1/100 ms, cost 10; at most two metadata operations in flight;
+one handshake at a time per provider; control capacity 1, refill 1/s. Necessary
+pongs use their own counter and consume no subscription-command capacity.
+Data-message receipt has a separate bounded counter. These conservative application limits do not
+prove an account tier or prevent external-consumer throttling. Reservations are refunded if canceled before first transport polling. Counters
+include failed transport attempts and retries, but never claim server receipt. HTTP and handshake
+transient failures use one persistent provider retry owner: 5-second exponential
+start, capped at 60 seconds with bounded positive jitter; five failed attempts
+enter a queryable slow-retry state with at most one attempt/minute. Thirty seconds
+of verified usable data resets it; a handshake never does. Denial/protocol/capacity
+failures are terminal for that operation. Metadata and handshakes have a 10-second
+total cap including local waits; a later explicit attempt retains pending backoff. No autonomous reconnect task exists; the sole bounded retry owner services an
+explicit operation. Step 4 owns metadata discovery/page coalescing.
+
+[memory.rs](providers/memory.rs) reserves adapter payload capacity before allocation
+and retains permits with returned bytes across queue/worker ownership. Its shared
+32 MiB ceiling refuses capacity rather than waiting for other buffers to be freed.
+Each socket reserves 4 MiB for bounded protocol framing/write/read storage; each
+returned/queued body reserves its payload allowance. No decoded books exist yet;
+step 4 must charge those against this same owner before allocation. TLS/kernel
+state is outside this application-payload accounting. Intake older than two seconds
+is revoked without consumption; that buffer-age ceiling grants no price validity.
+Worker messages retain their own fence, so explicit provider recovery cannot leave
+the worker consulting an obsolete fence.
+
+Messages, frames and REST bodies are capped at 1 MiB. The three task slots,
+one-slot queue, one worker and finite socket buffers bound transport ownership;
+this is not the step-6 simultaneous-allocation or throughput qualification.
+Transport calls require an absolute deadline that includes permit wait and I/O.
+Those deadlines confer no price-validity/history capability. Native Quit takes
+source ownership out of the mutex, revokes before waiting, and uses one total
+5-second deadline without a lock held across joins. Unfinished handles are
+restored to Workspace, cancellation is requested, and engine save is refused.
+A later Quit checks those same handles. Explicit recovery requires observed
+completion and an inactive general Quit; nothing connects on startup or completion.
+
+The [step-3 evidence](../../docs/verification/issue-5.md#step-3-implementation-baseline)
+records tests and outstanding gates. `cargo test -p metten --locked` runs controlled
+signature/credential/budget/local-peer/ownership tests; the ignored
+`isolated_native_fixed_items` test separately creates/deletes an owned disposable
+file Keychain. It does not establish the packaged data-protection-store path,
+OS-prompt behavior, provider support, real credentials or external acceptance.
+
+The packaged check `swift scripts/verify-credential.swift --provider-credentials
+target/release/bundle/macos/Metten.app` selects an early native-only check through
+`METTEN_PROVIDER_CHECK=1` plus descriptor 3 and a strict `mode: sources` bootstrap.
+The same Bootstrap validates canonical path/device/inode/ownership, opens/unlocks
+the disposable Keychain and clears its password before use. Failure exits; it
+never falls back to normal startup, normal Keychain or fixed provider hosts. One
+private receiver runs the finite check and acknowledges only after all credential
+operations/signature checks complete; process exit is separately observed by the
+runner. This is a step-3 check, not the future step-5 provider-frame protocol or
+Sources command. Normal dummy framing and absent-mode behavior are preserved.
+
+After a provider-stop timeout, Connect must re-run `stop_provider` (or the full
+shutdown check) to observe retained-handle completion before `recover_provider`.
+Recovery never drops a handle just because `is_finished` became true. Any provider
+task exit revokes its fence; unexpected worker exit revokes the shared intake gate
+and requires joined global recovery. Public borrowed socket operations use drop
+guards: an outer timeout/select that drops them also closes/revokes, including
+cancellation while waiting for a permit. Obsolete/stopped intake has saturating
+reason counters rather than an unbounded event log.
