@@ -42,4 +42,4 @@ python3 tests/credential-runner.test.py
 python3 tests/check-staged.test.py
 ```
 
-The JavaScript entry-point checks require Node's `stripTypeScriptTypes`. Both Python checks require Python 3; the staged-helper check also needs Git, and the credential-runner check needs `swiftc`. Credential-runner compilation and child waits have explicit timeouts. No checks were executed for this documentation-only bootstrap, and no browser, native application, or credential access was attempted.
+The JavaScript entry-point checks require Node's `stripTypeScriptTypes`. Both Python checks require Python 3; the staged-helper check also needs Git, and the credential-runner check needs `swiftc`. Credential-runner compilation and child waits have explicit timeouts. These checks do not launch a browser or native application or access credentials.
