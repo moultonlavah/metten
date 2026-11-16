@@ -1199,3 +1199,90 @@ async fn queued_handshake_rechecks_backoff_after_the_first_failure() {
     }
     assert_eq!(transport.attempts(Provider::Coinbase).unwrap(), [0, 1, 0]);
 }
+
+#[tokio::test]
+async fn established_socket_loss_paces_reconnect_and_restarts_usable_window() {
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    let peer = tokio::spawn(async move {
+        for _ in 0..6 {
+            let (socket, _) = listener.accept().await.unwrap();
+            drop(tokio_tungstenite::accept_async(socket).await.unwrap());
+        }
+    });
+    let transport = transport::Transport::controlled(address);
+    let (_signal, mut stop) = watch::channel(false);
+    let fence = Fence::new();
+    let mut connection = transport
+        .connect(
+            Provider::Coinbase,
+            None,
+            &mut stop,
+            Instant::now() + SHUTDOWN,
+            &fence,
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        transport
+            .receive(&mut connection, &mut stop, Instant::now() + SHUTDOWN)
+            .await
+            .map(|_| ()),
+        Err(Failure::Transport)
+    );
+    assert!(!fence.current(fence.token()));
+    assert!(matches!(
+        transport
+            .connect(
+                Provider::Coinbase,
+                None,
+                &mut stop,
+                Instant::now() + Duration::from_millis(30),
+                &Fence::new()
+            )
+            .await,
+        Err(Failure::Deadline)
+    ));
+    assert_eq!(transport.attempts(Provider::Coinbase).unwrap(), [0, 1, 0]);
+    // Direct fixture sockets exercise each failure without waiting through real backoff.
+    for failure in 2..=6 {
+        let fence = Fence::new();
+        let mut connection = transport::local_connection(address, Provider::Coinbase, fence).await;
+        if failure == 6 {
+            transport
+                .retry_usable(Provider::Coinbase, Instant::now())
+                .unwrap();
+            tokio::time::pause();
+            tokio::time::advance(Duration::from_secs(20)).await;
+            tokio::time::resume();
+        }
+        assert_eq!(
+            transport
+                .receive(&mut connection, &mut stop, Instant::now() + SHUTDOWN)
+                .await
+                .map(|_| ()),
+            Err(Failure::Transport)
+        );
+        assert_eq!(
+            transport.slow_retry(Provider::Coinbase).unwrap(),
+            failure >= 5
+        );
+    }
+    peer.await.unwrap();
+    tokio::time::pause();
+    tokio::time::advance(Duration::from_secs(10)).await;
+    transport
+        .retry_usable(Provider::Coinbase, Instant::now())
+        .unwrap();
+    assert!(transport.slow_retry(Provider::Coinbase).unwrap());
+    tokio::time::advance(Duration::from_secs(29)).await;
+    transport
+        .retry_usable(Provider::Coinbase, Instant::now())
+        .unwrap();
+    assert!(transport.slow_retry(Provider::Coinbase).unwrap());
+    tokio::time::advance(Duration::from_secs(1)).await;
+    transport
+        .retry_usable(Provider::Coinbase, Instant::now())
+        .unwrap();
+    assert!(!transport.slow_retry(Provider::Coinbase).unwrap());
+}

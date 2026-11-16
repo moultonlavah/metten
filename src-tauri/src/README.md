@@ -149,11 +149,14 @@ one handshake at a time per provider; control capacity 1, refill 1/s. Necessary
 pongs use their own counter and consume no subscription-command capacity.
 Data-message receipt has a separate bounded counter. These conservative application limits do not
 prove an account tier or prevent external-consumer throttling. Reservations are refunded if canceled before first transport polling. Counters
-include failed transport attempts and retries, but never claim server receipt. HTTP and handshake
-transient failures use one persistent provider retry owner: 5-second exponential
+include failed transport attempts and retries, but never claim server receipt. HTTP, handshake and established-socket
+transient read/control-write failures use one persistent provider retry owner: 5-second exponential
 start, capped at 60 seconds with bounded positive jitter; five failed attempts
 enter a queryable slow-retry state with at most one attempt/minute. Thirty seconds
-of verified usable data resets it; a handshake never does. Denial/protocol/capacity
+of verified usable data resets it; a handshake never does. Socket loss resets
+the usable-data interval before later recovery. Intentional cancellation resets
+that interval without incrementing transient failures; malformed protocol remains
+terminal. Each failed socket operation is recorded once, then closed/revoked. Denial/protocol/capacity
 failures are terminal for that operation. Metadata and handshakes have a 10-second
 total cap including local waits; a later explicit attempt retains pending backoff. No autonomous reconnect task exists; the sole bounded retry owner services an
 explicit operation. Step 4 owns metadata discovery/page coalescing.

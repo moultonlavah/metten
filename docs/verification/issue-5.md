@@ -622,3 +622,134 @@ Final native behavior/dependency SHA-256 identities:
 - `src-tauri/src/providers/transport.rs`: `6d71f4e2c167e43fe2405681898312c607ebfafbbc387826427c3a32b8976d11`
 - `scripts/verify-credential.swift`: `5fda0ac5f17fc9619e691f03901aa49bd5b7a1e536abb2a7bd6e6c8bd05f81a3`
 - `tests/credential-runner.test.py`: `abe333bc6596f8a9cf725277d60ecbb83320a5ba9bdc51b5cbf21c69ced24635`
+
+## Step-3 established-socket retry correction
+
+Owner requested one implementing subagent followed by a separate review of the
+supported Ponytail finding against commit `163a0b7dc962595f5f1f8f59a6fecefa719ccf60`.
+Expected path before production edits: established socket outcomes in
+`providers/transport.rs` feed the existing provider Retry owner; focused native
+peer/clock regressions and the owning native contract describe the correction.
+No new owner, dependency, configuration, command, engine change or step-4 work is
+needed. Preserve the unrelated docs README edit and every proposal artifact.
+
+Implementer activation independently resolved origin
+`https://github.com/moultonlavah/metten.git`, default branch main, and freshly
+queried published guidance `fa3663624436e9e4df9d2b000d57f7f21e099786`.
+Loaded its root AGENTS entry and discovered verification/published-instruction
+discovery, maintainability, CONTRIBUTING, issue workflow and domain guidance;
+local/published instruction inventory contains root AGENTS only. Local code map,
+native contract, product credential/local-app boundaries, ADR 0001, glossary,
+approved design and current issue-5 receipt were consulted. The approved design
+SHA-256 matches `21e2926329f67fef05b264dcb8a0dfca0455aaa697c753bfc4f2d95b19fe4bc7`.
+The older local entry omits published process additions; the published additions
+apply without changing approved product behavior. No missing consequential
+guidance or unresolved conflict was identified. Issue #5 remains open with its
+existing product/high/prepared labels; native blockers #3/#4 are closed. Tracker
+publication remains outside this bounded local correction.
+
+Correction stays on that path. The existing in-flight socket guard now records a
+completed send/receive failure once with the existing Retry owner and still
+closes/revokes the socket. Dropping an unfinished public operation resets usable
+continuity with Stopped, without inventing a failed network attempt. Transient
+I/O, EOF/abrupt loss and received Close are distinguished from malformed protocol;
+the same classifier covers reads, control writes and protocol flushes. No new
+retry loop is introduced. Deadline remains the existing finite Deadline result:
+it resets socket usability but is not newly counted as Transport, so local permit
+expiry/caller cancellation cannot consume a transient-attempt count. HTTP/handshake
+timeout policy is otherwise unchanged by this established-socket correction.
+
+Executed checks:
+
+- Added `established_socket_loss_paces_reconnect_and_restarts_usable_window` first.
+  `/Users/connormoulton/.cargo/bin/cargo test -p metten --locked established_socket_loss_paces_reconnect -- --nocapture`
+  failed against unchanged production source: expected Transport after abrupt
+  controlled-peer loss, received Protocol (exit 101). After the fix it passed.
+  It checks the public connect/receive path, no new handshake during pending
+  backoff, slow retry reached at the fifth failed socket operation, and a usable
+  interval interrupted at 20 seconds requiring a new full 30 seconds to reset.
+  Direct loopback fixture sockets generate later receive failures without real
+  backoff waits; production handshake admission is checked separately in the same
+  test. No provider host or account is used.
+- Added a bounded classifier check for BrokenPipe/closed/abrupt EOF versus invalid
+  opcode. It covers the shared read/write error mapping; it does not claim an
+  observed provider write failure.
+- `cargo test -p metten --locked`: **49 passed, 1 explicitly ignored**. Existing
+  caller-drop/partial-I/O, stop, ownership, budget, signing and credential tests
+  also passed. The explicit-only native Keychain check was not rerun.
+- `cargo fmt --all --check`, `git diff --check`, and
+  `cargo clippy -p metten --all-targets --locked -- -D warnings`: **passed**.
+
+Unchanged engine/dependency/frontend/native-credential/runner sources reuse the
+final step-3 receipt above within its limits. No engine/release-fixture, frontend,
+Python, Mac bundle or packaged Keychain/GUI rerun was warranted for this local
+transport-only correction. The old finished bundle is not evidence that this new
+transport source was packaged or externally accepted. No commit, staging,
+push/PR, provider/account/credential access, trading or step-4 work occurred.
+Independent fix review remains for the lead's separately requested reviewer.
+
+Implementation source SHA-256 for review:
+
+- `src-tauri/src/providers/transport.rs`: `1b53c4f87c82739a5277c21fbd5cfb6aff7e9445667c238b76c028b00a22c5d3`
+- `src-tauri/src/providers/tests.rs`: `606c3dd34b475ca92033f26555af5f5d4a86b61a56da9adede0236e76b6bf6b1`
+- `src-tauri/src/README.md`: `9ee6c72d30b6e94afea1dad498efbc2eb3782371d68a73fe5eeaaa52660f088d`
+
+Implementer delivery query at **2026-11-16 15:37:53 UTC** returned the same
+published guidance `fa3663624436e9e4df9d2b000d57f7f21e099786`; no affected
+instruction refresh/review repeat was needed. The lead must refresh again at
+review handoff/delivery and review the source hashes actually delivered.
+
+### Independent correction review and lead delivery
+
+A separate read-only subagent independently loaded the published root entry at
+`fa3663624436e9e4df9d2b000d57f7f21e099786`, traversed discovery/verification,
+maintainability, CONTRIBUTING, domain, issue/triage and applicable local contracts,
+and verified the three correction hashes above. No consequential missing guidance
+or unresolved conflict was found. Its final query at 2026-11-16 15:40:06 UTC
+returned the same guidance revision. It reported **Ship**, with no supported
+must-fix, should-fix or lean finding in this bounded correction.
+
+The reviewer independently executed the established-socket regression and shared
+failure-classifier test (one passing test each), plus `git diff --check`. Static
+tracing checked exactly-once failure recording, caller-drop reset without a
+transient count, guarded receive-capacity rejection, closure/revocation and
+terminal malformed-frame errors. The 49-test native suite, formatting and Clippy
+remain implementer-executed evidence. Explicit-close/already-revoked-send lifecycle
+integration and broader timeout policy were not expanded by this correction;
+later connection integration must preserve sustained-usability semantics.
+
+The lead inspected the complete correction and its connected retry/drop paths,
+verified the source/test/contract hashes remained identical to the reviewed
+candidate, and refreshed remote guidance at **2026-11-16 15:40:07 UTC**: unchanged
+`fa3663624436e9e4df9d2b000d57f7f21e099786`. No affected re-review was required.
+Only this evidence receipt changed after review. HEAD remains
+`163a0b7dc962595f5f1f8f59a6fecefa719ccf60`, index unchanged/empty, with the fix
+uncommitted; the inherited docs README edit and all proposal artifacts remain.
+No stage-4 work, provider/credential access, bundle/GUI walkthrough, commit, push
+or PR was performed. Issue #5's broader acceptance and U1–U7 remain open.
+
+### Owner-authorized correction commit
+
+Owner requested committing the reviewed fix in this selected worktree, on top of
+original step-3 commit `163a0b7dc962595f5f1f8f59a6fecefa719ccf60`; no amend or push.
+Fresh published discovery on 2026-11-16 16:11 UTC resolved origin/main to
+`354f731bc75224d9724ec460b2bb0037a9fa12ea`. Its root AGENTS was loaded; root,
+applicable agent guidance and CONTRIBUTING have no changes from the previously
+loaded `fa366362` baseline. Published nested inventory still has root AGENTS only.
+Prior guidance traversal and independent review remain applicable. The reviewed
+transport/test/contract SHA-256 identities above still match. Stage only the four
+correction paths; preserve unrelated docs README work and untracked proposals.
+Run the published staged-snapshot check for native tests before committing;
+reuse the unchanged passing formatter/Clippy and independent review evidence.
+
+Staged verification passed against immutable tree
+`f67aef839c2feeacd875ab988374e1b7f4036138` using the existing
+`check-staged.py` with `npm ci && npm run build && cargo test -p metten --locked`
+(and the selected shared Cargo target directory). Frontend assets built;
+**49 native tests passed, 1 explicit-only Keychain test ignored**. Only this
+receipt was added afterward; all reviewed behavior/test/contract blobs are
+verified identical to the passing staged tree. Final staged whitespace check
+passed. Delivery freshness at 2026-11-16 16:12:09 UTC returned unchanged
+`354f731bc75224d9724ec460b2bb0037a9fa12ea`; no affected review repeat was needed.
+The correction is committed separately atop the original step-3 commit, with
+unrelated README/proposals excluded. No push or step-4 work is authorized here.

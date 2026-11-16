@@ -39,11 +39,28 @@ impl Connection {
 struct InFlight<'a> {
     connection: &'a mut Connection,
     completed: bool,
+    retry: &'a std::sync::Mutex<budget::Retry>,
+}
+impl InFlight<'_> {
+    fn finish<T>(mut self, result: Result<T, Failure>) -> Result<T, Failure> {
+        self.completed = true;
+        if let Err(error) = result {
+            self.connection.fail();
+            self.retry
+                .lock()
+                .map_err(|_| Failure::Unavailable)?
+                .delay(error);
+        }
+        result
+    }
 }
 impl Drop for InFlight<'_> {
     fn drop(&mut self) {
         if !self.completed {
             self.connection.fail();
+            if let Ok(mut retry) = self.retry.lock() {
+                retry.delay(Failure::Stopped);
+            }
         }
     }
 }
@@ -443,9 +460,11 @@ impl Transport {
             connection.fail();
             return Err(Failure::Stopped);
         }
-        let mut operation = InFlight {
+        let retry = &self.retries[connection.provider.index()];
+        let operation = InFlight {
             connection,
             completed: false,
+            retry,
         };
         let connection = &mut *operation.connection;
         let fence = connection.fence.clone();
@@ -458,8 +477,7 @@ impl Transport {
                 send_control(socket, text, &mut permit, stop, deadline).await
             })
             .await;
-        operation.completed = result.is_ok();
-        result
+        operation.finish(result)
     }
     pub async fn receive(
         &self,
@@ -467,17 +485,13 @@ impl Transport {
         stop: &mut watch::Receiver<bool>,
         deadline: Instant,
     ) -> Result<memory::Bytes, Failure> {
-        let charge = match self.memory.reserve(MAX_BYTES) {
-            Ok(charge) => charge,
-            Err(error) => {
-                connection.fail();
-                return Err(error);
-            }
-        };
-        let mut operation = InFlight {
+        let retry = &self.retries[connection.provider.index()];
+        let operation = InFlight {
             connection,
             completed: false,
+            retry,
         };
+        let charge = self.memory.reserve(MAX_BYTES)?;
         let connection = &mut *operation.connection;
         let fence = connection.fence.clone();
         let result = fence
@@ -492,7 +506,7 @@ impl Transport {
                             .next()
                             .await
                             .ok_or(Failure::Transport)?
-                            .map_err(|_| Failure::Protocol)
+                            .map_err(websocket_failure)
                     })
                     .await?;
                     match message {
@@ -515,18 +529,18 @@ impl Transport {
                                 .await?;
                             bounded(stop, deadline, async {
                                 permit.start()?;
-                                socket.flush().await.map_err(|_| Failure::Transport)
+                                socket.flush().await.map_err(websocket_failure)
                             })
                             .await?;
                         }
                         Message::Pong(_) => (),
+                        Message::Close(_) => return Err(Failure::Transport),
                         _ => return Err(Failure::Protocol),
                     }
                 }
             })
             .await;
-        operation.completed = result.is_ok();
-        result
+        operation.finish(result)
     }
 }
 
@@ -563,7 +577,11 @@ fn websocket_failure(error: tokio_tungstenite::tungstenite::Error) -> Failure {
         {
             Failure::Transport
         }
-        Error::Io(_) => Failure::Transport,
+        Error::Io(_)
+        | Error::ConnectionClosed
+        | Error::Protocol(
+            tokio_tungstenite::tungstenite::error::ProtocolError::ResetWithoutClosingHandshake,
+        ) => Failure::Transport,
         _ => Failure::Protocol,
     }
 }
@@ -580,7 +598,27 @@ pub(super) async fn send_control<S: tokio::io::AsyncRead + tokio::io::AsyncWrite
         socket
             .send(Message::Text(text.into()))
             .await
-            .map_err(|_| Failure::Transport)
+            .map_err(websocket_failure)
     })
     .await
+}
+
+#[cfg(test)]
+mod failure_tests {
+    use super::*;
+    #[test]
+    fn socket_loss_is_transient_but_invalid_frames_are_not() {
+        use tokio_tungstenite::tungstenite::{Error, error::ProtocolError};
+        for error in [
+            Error::Io(std::io::ErrorKind::BrokenPipe.into()),
+            Error::ConnectionClosed,
+            Error::Protocol(ProtocolError::ResetWithoutClosingHandshake),
+        ] {
+            assert_eq!(websocket_failure(error), Failure::Transport);
+        }
+        assert_eq!(
+            websocket_failure(Error::Protocol(ProtocolError::InvalidOpcode(3))),
+            Failure::Protocol
+        );
+    }
 }
