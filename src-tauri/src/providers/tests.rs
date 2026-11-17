@@ -2080,7 +2080,8 @@ async fn three_owned_provider_tasks_send_seven_initial_controls_without_extra_co
             .iter()
             .filter(|c| c["params"]["action"] == "indexlist")
             .count(),
-        1
+        1,
+        "controls: {controls:?}"
     );
     assert_eq!(
         controls.iter().filter(|c| c["type"] == "subscribe").count(),
@@ -2984,4 +2985,207 @@ async fn delayed_handshake_subscribes_only_markets_still_retained_after_upgrade(
     assert_eq!(transport.attempts(Provider::Kalshi).unwrap()[1], 1);
     owner.shutdown(Instant::now() + SHUTDOWN).await.unwrap();
     peer.await.unwrap();
+}
+
+#[test]
+fn fixed_display_reads_are_local_and_revoked_optional_sources_stay_scoped() {
+    let transport = transport::Transport::new(Environment::Demo).unwrap();
+    let mut worker = SourceWorker::prepare_display(transport.memory().clone()).unwrap();
+    assert!(worker.membership([true, true, true, true], 0).is_ok());
+    let view = worker.snapshot(0).unwrap();
+    for _ in 0..20 {
+        let value = view.wire_snapshot(10);
+        assert!(value["owner"].is_string() && value["revision"].is_string());
+        assert!(
+            value["bindings"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .all(|b| b["usable"] == false && b["history_ready"] == false)
+        );
+        for i in 0..4 {
+            view.wire_details(i, 10).unwrap();
+        }
+    }
+    for provider in [Provider::Kalshi, Provider::Coinbase, Provider::Kraken] {
+        assert_eq!(transport.attempts(provider).unwrap(), [0, 0, 0]);
+    }
+    worker.membership([false, true, true, true], 1).unwrap();
+    assert!(!view.stream_current(metten_engine::sources::Stream::Book));
+    assert!(view.stream_current(metten_engine::sources::Stream::Brti));
+}
+#[tokio::test]
+async fn isolated_transport_refuses_production_routes_before_spending() {
+    let transport = transport::Transport::isolated().unwrap();
+    let fence = Fence::new();
+    let (_send, mut stop) = watch::channel(false);
+    assert!(matches!(
+        transport
+            .get(
+                &Route::ExchangeStatus,
+                &mut stop,
+                Instant::now() + SHUTDOWN,
+                &fence
+            )
+            .await,
+        Err(Failure::InvalidRequest)
+    ));
+    assert!(matches!(
+        transport
+            .connect(
+                Provider::Coinbase,
+                None,
+                &mut stop,
+                Instant::now() + SHUTDOWN,
+                &fence
+            )
+            .await,
+        Err(Failure::InvalidRequest)
+    ));
+    assert_eq!(transport.attempts(Provider::Kalshi).unwrap(), [0, 0, 0]);
+    assert_eq!(transport.attempts(Provider::Coinbase).unwrap(), [0, 0, 0]);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn fixture_dispatch_completes_only_after_real_decode_and_publication() {
+    let transport = Arc::new(transport::Transport::isolated().unwrap());
+    let mut owner = Coordinator::new();
+    let mut handle = owner
+        .start_sources(SourceWorker::prepare_display(transport.memory().clone()).unwrap())
+        .unwrap();
+    let disconnected = handle.clone();
+    assert!(
+        tokio::task::spawn_blocking(
+            move || disconnected.dispatch_fixture(Provider::Coinbase, b"{}")
+        )
+        .await
+        .unwrap()
+        .is_err()
+    );
+    handle.enable(2, true).unwrap();
+    owner
+        .start_provider(Provider::Coinbase, transport.clone(), &mut handle, None)
+        .unwrap();
+    tokio::time::timeout(SHUTDOWN, async {
+        loop {
+            if handle.latest.borrow().as_ref().is_some_and(|v| {
+                v.wire_snapshot(handle.elapsed_ms())["sources"][2]["connection"] == "open"
+            }) {
+                break;
+            }
+            handle.latest.changed().await.unwrap();
+        }
+    })
+    .await
+    .unwrap();
+    let receipt = handle.clone();
+    tokio::task::spawn_blocking(move||receipt.dispatch_fixture(Provider::Coinbase,br#"{"type":"last_match","product_id":"BTC-USD","trade_id":10,"price":"68000.12","time":"2026-11-16T00:00:00Z"}"#)).await.unwrap().unwrap();
+    let view = handle.latest.borrow().clone().unwrap();
+    let before = view.wire_snapshot(handle.elapsed_ms());
+    assert_eq!(before["bindings"][1]["value"], "68000.12");
+    let invalid = handle.clone();
+    tokio::task::spawn_blocking(move || invalid.dispatch_fixture(Provider::Coinbase, b"not json"))
+        .await
+        .unwrap()
+        .unwrap();
+    let after = handle
+        .latest
+        .borrow()
+        .clone()
+        .unwrap()
+        .wire_snapshot(handle.elapsed_ms());
+    assert_eq!(after["bindings"][1]["usable"], false);
+    assert_ne!(after["revision"], before["revision"]);
+    assert!(!view.stream_current(metten_engine::sources::Stream::Coinbase));
+    owner.shutdown(Instant::now() + SHUTDOWN).await.unwrap();
+    assert!(owner.finished());
+}
+
+#[test]
+fn logical_kalshi_retirement_preserves_brti_and_releases_old_subscription_ids() {
+    use metten_engine::sources::{Connection, Stream};
+    let memory = memory::Memory::default();
+    let mut worker =
+        SourceWorker::prepare(&all_source_strategy(), &source_markets(), memory).unwrap();
+    let (outbound, _controls) = mpsc::channel(7);
+    worker.controls[0] = Some(outbound);
+    let fence = Fence::new();
+    worker
+        .connection(Provider::Kalshi, worker.tokens()[0], Connection::Open, 0)
+        .unwrap();
+    feed_source(
+        &mut worker,
+        &fence,
+        Provider::Kalshi,
+        br#"{"type":"subscribed","msg":{"sid":1,"channel":"orderbook_delta"}}"#,
+        1,
+        None,
+    )
+    .unwrap();
+    feed_source(
+        &mut worker,
+        &fence,
+        Provider::Kalshi,
+        br#"{"type":"subscribed","msg":{"sid":3,"channel":"cfbenchmarks_value"}}"#,
+        2,
+        None,
+    )
+    .unwrap();
+    let old = worker.snapshot(2).unwrap();
+    worker.membership([false, true, true, true], 3).unwrap();
+    assert!(!old.stream_current(Stream::Book));
+    assert!(old.stream_current(Stream::Brti));
+    assert!(matches!(
+        feed_source(
+            &mut worker,
+            &fence,
+            Provider::Kalshi,
+            br#"{"type":"orderbook_delta","sid":1,"seq":2,"msg":{"market_ticker":"KXBTC15M-0"}}"#,
+            4,
+            None
+        ),
+        Err(Failure::Stopped)
+    ));
+    assert!(fence.current(fence.token()));
+    worker.membership([true, true, true, true], 5).unwrap();
+    feed_source(
+        &mut worker,
+        &fence,
+        Provider::Kalshi,
+        br#"{"type":"subscribed","msg":{"sid":9,"channel":"orderbook_delta"}}"#,
+        6,
+        None,
+    )
+    .unwrap();
+    assert!(worker.snapshot(6).unwrap().stream_current(Stream::Brti));
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn disconnect_cancels_pending_connect_and_cannot_be_coalesced_into_old_permission() {
+    let transport = transport::Transport::isolated().unwrap();
+    let mut owner = Coordinator::new();
+    let handle = owner
+        .start_sources(SourceWorker::prepare_display(transport.memory().clone()).unwrap())
+        .unwrap();
+    handle.enable(2, true).unwrap();
+    let before = handle.latest.borrow().clone().unwrap();
+    let generation = before.wire_snapshot(handle.elapsed_ms())["bindings"][1]["generation"].clone();
+    let pending = handle.intent_revision(2);
+    handle.disable(2).unwrap();
+    assert!(matches!(
+        handle.enable_if_current(2, pending),
+        Err(Failure::Stopped)
+    ));
+    handle
+        .enable_if_current(2, handle.intent_revision(2))
+        .unwrap();
+    let after = handle
+        .latest
+        .borrow()
+        .clone()
+        .unwrap()
+        .wire_snapshot(handle.elapsed_ms());
+    assert_ne!(after["bindings"][1]["generation"], generation);
+    assert!(!before.stream_current(metten_engine::sources::Stream::Coinbase));
+    owner.shutdown(Instant::now() + SHUTDOWN).await.unwrap();
 }

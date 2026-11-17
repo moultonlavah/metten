@@ -118,13 +118,13 @@ for the retained non-trading session and failed-save/retry evidence.
 Kalshi records, supported key validation, nonsecret status and fixed-item readback.
 The ordinary store uses the data-protection Keychain with synchronizing disabled
 and WhenUnlockedThisDeviceOnly protection. The separate dummy adapter is unchanged.
-No provider credential IPC command is registered yet. Native callers must serialize
+Step5 now registers the finite provider credential command described below. Native callers must serialize
 credential/connection admission and move exclusive ownership to the native blocking
 worker. `Credentials::change` validates before revocation, stops/joins the shared
 Kalshi/BRTI task through the existing Tauri runtime, and only then mutates the fixed
 item. Other provider fences stay current. A timeout retains the task and refuses
 mutation. Do not invoke this blocking interface under a shared lock or on an async
-runtime thread. Command admission is deferred to step 5.
+runtime thread. Step-5 command admission is described below.
 
 [providers/mod.rs](providers/mod.rs) owns three fixed provider task slots, one
 optional worker, a single-slot raw intake queue, independent generation fences
@@ -328,3 +328,68 @@ identity/precision/capacity rejection; cancellation, explicit recovery and the
 inherited shutdown tests. U1–U7 in the [source profiles](../../docs/sources/README.md)
 remain blocked. No provider delivery, real entitlement/rights, complete history,
 financial outcome or production performance is established.
+
+## Step-5 source commands and isolated receiver
+
+`main.rs:sources` admits exact `snapshot`, `details`, `inspect`, `connect` and
+`disconnect` objects. `provider_credential` admits only Kalshi status/save/replace/
+remove in the native-selected Demo environment. Unknown/extra fields, raw bodies,
+invalid decimal-string IDs and oversized material return finite sanitized errors.
+The bounded counting writer enforces 256-KiB request/output ceilings without an
+oversized serialized clone. `SourceResponse` retains its response reservation
+through serialization. IDs, revisions, sequences and large counters stay strings.
+Inspection reads the real saved immutable version and derives validated source
+requirements; it never changes subscriptions or owns another rule representation.
+
+Workspace has one admitted mutation and one admitted read. `ProviderOwner` moves
+Coordinator and fixed credential ownership into blocking work and restores taken
+ownership on errors/unwind. Published source handles remain readable during
+native operations. A clone of the existing revocation signals lets Quit stop
+intake immediately while an OS operation owns the coordinator. Quit waits only
+within one five-second source deadline for mutation ownership, receiver and source
+completion; unfinished work stays owned and no engine save/exit is claimed.
+Native prompt completion remains noncancelable. Explicit recovery first joins old
+handles. No completion, saved credential or window opening connects automatically.
+
+`SourceWorker::prepare_display` uses the fixed engine display catalog. A fixed
+logical desired set shares the existing worker and three task slots. Membership
+changes revoke stream permissions before publication, preserve the shared
+Kalshi/BRTI socket while either consumer remains, and retire bounded decoder SIDs
+without resetting the other source. A local two-second membership wait confirms
+the worker observed the desired set before connection start; it grants no price
+lease. `SourceView::wire_snapshot/wire_details` recheck permissions, preserve exact
+units/identity/receipt age and distinguish received values from usable inputs.
+Snapshots/details/inspection make zero provider requests. Diagnostics remain
+bounded in memory; no source preferences or feed history are stored durably.
+
+`credential.rs:read_bootstrap` is the shared descriptor-3 bootstrap reader for
+mutually exclusive dummy, early provider-check and source-walkthrough launches.
+`METTEN_SOURCES_CHECK=1` alone grants nothing: strict sources-mode bootstrap and
+owned disposable-store identity must validate or startup exits. The mode remains
+isolated after channel failure. The ordinary store and production transport are
+unavailable in this launch. `Transport::isolated` rejects real GETs/handshakes;
+controlled connections feed the actual decoders and worker. Synthetic current/
+next metadata is installed only after explicit Kalshi Connect in this mode.
+
+`SourceVerifier` owns one receiver thread; `observe_sources` owns exact framing,
+sequence and acknowledgment ordering. Envelopes are at most 256 KiB with UTF-8
+payloads at most 128 KiB, exact session, canonical string-u64 sequence starting1,
+kind provider_frame and one of three provider identities. Read deadline is two
+seconds total; dispatch plus acknowledgment has another two-second total deadline.
+The runner waits at most three seconds. Completion replies are attached only to
+fixture intake and complete after accepted or explicitly invalid publication.
+Ack1 proves that native publication, never healthy data or renderer painting.
+Malformed framing/dispatch/ack/EOF permanently fails the channel, revokes all
+fixture generations and blocks reconnect. Drop/panic also revokes through the
+receiver lifetime guard. Quit cancels pending dispatch and observes receiver exit
+under the same source deadline. No second descriptor reader or raw fixture IPC
+command exists. Dummy framing/receipt-only ack semantics remain separate.
+
+Native/public tests and `tests/sources.test.mjs` cover their real owners. The
+[issue-5 record](../../docs/verification/issue-5.md) distinguishes final executed
+checks, isolated packaged evidence, GUI/ordinary Keychain limits, and still-open
+U1–U7. Controlled data does not establish real access, rights or production capacity.
+
+Normal dummy verification (including invalid inherited setup) refuses the new provider/source mutation commands. Only a validated sources walkthrough enables its controlled source path; invalid source-mode startup exits. This prevents the newly added interface from reaching ordinary provider credentials or public feeds during an old dummy walkthrough.
+
+Disconnect revokes the logical gates before mutation admission, so it can cancel a Connect blocked in native credential access even if cleanup reports Busy. Connect retains the request's intent revision and cannot revive a superseded request. The fixed desired watch record carries checked revocation revisions as well as final membership; the worker applies every new revocation even when an off/on pair coalesces to the same final Boolean. This prevents watch coalescing from restoring old source permission. The UI allows Disconnect during pending Connect and suppresses older action feedback.

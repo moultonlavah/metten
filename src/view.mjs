@@ -18,3 +18,28 @@ export function strategyFailure(failure, saving = false) {
   if (code === 'resource_limit') return 'Strategy content is too large to process or show completely. Stored history is preserved.';
   return saving ? 'Save not confirmed — inspect saved versions before retrying.' : 'Local strategy action failed. Wait and retry.';
 }
+
+export function sourceFailure(failure) {
+  const code = failure && typeof failure === 'object' ? failure.code : '';
+  const messages = { busy: 'A source action is in progress. Wait and retry.', missing: 'Kalshi credentials are missing. Save your configured key before connecting.', already_saved: 'A credential is already saved. Use Replace to change it.', denied: 'Access was explicitly refused. Check source permissions.', invalid_credential: 'The key ID or private key is invalid or unsupported.', still_stopping: 'Data intake is stopping. Wait before reconnecting.', quitting: 'The application is stopping.', ambiguous: 'Credential change could not be confirmed. Check status before reconnecting.', capacity: 'Source data exceeds its bounded allowance.', invalid_request: 'Invalid source request.', not_found: 'Saved version unavailable. Refresh saved versions.' };
+  return Object.hasOwn(messages, code) ? messages[code] : 'Source action unavailable. Inspect its status and retry explicitly.';
+}
+export function sourcePresentation(snapshot, name) {
+  const state = snapshot.sources.find(s => s.source === name);
+  const labels = { disconnected: 'Disconnected', missing_credentials: 'Credentials missing', connecting: 'Connecting…', open: 'Connection open', access_refused: 'Access explicitly refused' };
+  const lines = [state && Object.hasOwn(labels, state.connection) ? labels[state.connection] : 'Source state unavailable'];
+  const bindings = snapshot.bindings.filter(b => b.source === name);
+  const primary = bindings.filter(b => name !== 'kalshi' || (b.field === 'buyable_ask' && (!snapshot.current_market || b.market_id === snapshot.current_market)));
+  const received = primary.filter(b => b.value !== null);
+  if (!received.length && state?.enabled) lines.push('Awaiting verified data.');
+  for (const b of received) {
+    const price = b.unit === 'contract_cents' ? `${b.value}¢` : `${b.value} USD/BTC`;
+    lines.push(`${b.side ? b.side.toUpperCase() + ' ask · ' : ''}${price}`);
+    lines.push(`${b.market_id ?? b.identity ?? name} · receipt age ${b.age_ms === null ? 'unknown' : b.age_ms + ' ms'}`);
+  }
+  const reasons = { unknown_freshness: 'Freshness has not been verified.', gap: 'Data gap — rebuilding.', disconnected: 'Last value retained; source disconnected.', invalid_value: 'Invalid source data.', inconsistent_evidence: 'Conflicting source data.', over_age: 'Intake exceeded its age limit.', overflow: 'Intake capacity exceeded.', access_refused: 'Access explicitly refused.', awaiting_data: 'Awaiting verified data.' };
+  const unavailable = [...new Set(received.filter(b => !b.usable).map(b => b.reason ?? b.capabilities.current ?? 'awaiting_data'))];
+  for (const reason of unavailable) lines.push(Object.hasOwn(reasons, reason) ? reasons[reason] : 'This input is unavailable for strategy use.');
+  if (received.some(b => !b.history_ready)) lines.push('Complete history is unverified.');
+  return lines.join('\n');
+}

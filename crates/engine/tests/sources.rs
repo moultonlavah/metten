@@ -2069,3 +2069,30 @@ fn changed_descriptor_stops_attached_pending_evaluator_and_explicit_recovery_sta
     assert!(recovered.snapshot().candidate.is_none());
     assert!(recovered.snapshot().checkpoints.is_empty());
 }
+
+#[test]
+fn display_catalog_is_fixed_disconnected_and_grants_no_capabilities() {
+    let s = SourceState::display().unwrap();
+    let v = s.snapshot(0).unwrap();
+    assert!(v.markets.is_empty());
+    assert_eq!(v.sources.len(), 4);
+    assert!(
+        v.sources
+            .iter()
+            .all(|(_, c)| *c == Connection::Disconnected)
+    );
+    assert_eq!(s.requirements().len(), 8);
+    assert_eq!(v.bindings.len(), 3);
+    for b in &v.bindings {
+        assert!(b.value.is_none() && !b.usable);
+        // No lookback is requested; that does not authorize historical coverage.
+        assert_eq!(b.capabilities, Capabilities::default());
+    }
+    assert_eq!(
+        s.requirements()
+            .iter()
+            .filter(|r| r.source == Source::Kalshi && r.instrument == "current_contract")
+            .count(),
+        3
+    );
+}

@@ -141,10 +141,11 @@ impl Kalshi {
         }
         Ok(())
     }
-    pub fn stream(&self, bytes: &[u8]) -> Result<Option<Stream>, Failure> {
+    pub fn stream(&self, bytes: &[u8], disabled: &[bool; 6]) -> Result<Option<Stream>, Failure> {
         let message: Message<'_> = decode(bytes)?;
         let stream = Self::stream_kind(message.kind);
         if let Some(stream) = stream
+            && !disabled[stream as usize]
             && self.sids.get(&message.sid.ok_or(Failure::Protocol)?) != Some(&stream)
         {
             return Err(Failure::Protocol);
@@ -156,6 +157,18 @@ impl Kalshi {
             .iter()
             .find(|(_, s)| **s == stream)
             .and_then(|(sid, _)| u32::try_from(*sid).ok())
+    }
+    pub fn retire(&mut self, stream: Stream) {
+        self.sequences
+            .retain(|sid, _| self.sids.get(sid) != Some(&stream));
+        self.sids.retain(|_, owned| *owned != stream);
+        if stream == Stream::Book {
+            self.books.clear();
+        }
+        if stream == Stream::Brti {
+            self.index.reconnect();
+            self.index_available = None;
+        }
     }
     pub fn discard_book(&mut self) {
         self.books.clear();

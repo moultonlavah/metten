@@ -15,6 +15,7 @@ Run checks relevant to your change. The current automated workflow runs these on
 ```sh
 python3 tests/credential-runner.test.py
 python3 tests/check-staged.test.py
+npm run lint
 npm run check
 npm run build
 cargo fmt --all --check
@@ -57,3 +58,9 @@ full-hour tests and packaged Mac build. Rust **1.100.0** stays fixed: a compiler
 upgrade needs a separate issue and reassessment of the engine's
 compiler-dependent resource proof. Run the complete Foundation checks workflow
 on the exact proposed revision before accepting any pin update.
+
+## Source integration checks
+
+Use the published maintainability standard from freshly resolved default-branch guidance even in this older worktree. `npm run lint` runs pinned Oxlint correctness rules and type-aware `typescript/no-floating-promises` with zero warnings. `lint:fix` adds safe fixes to the same configuration; inspect any edits. Actual maintained paths include src/view.mjs, view.d.mts and all tests JavaScript; browser and Node globals are separate. Lint does not replace TypeScript, behavior tests or rejection handling at explicit-void sites.
+
+Run `cargo test -p metten --locked` and the public engine source tests for changed native/source boundaries. Run `python3 tests/credential-runner.test.py` after shared bootstrap/runner changes. The isolated packaged commands and proof limits are in [scripts](scripts/README.md#isolated-sources-walkthrough-step-5). Calibration/qualification belongs to separately authorized step6; no test grants provider/account/ordinary credential access or rights. Reuse unchanged release-hour arithmetic evidence only within its named version/assumptions; the complete Foundation job retains that gate.

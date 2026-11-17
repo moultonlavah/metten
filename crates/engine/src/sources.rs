@@ -69,7 +69,7 @@ pub enum Unavailable {
     Stopped,
 }
 impl Unavailable {
-    fn code(self) -> &'static str {
+    pub fn code(self) -> &'static str {
         match self {
             Self::Awaiting => "awaiting_data",
             Self::Freshness => "unknown_freshness",
@@ -340,7 +340,80 @@ impl SourceState {
         if markets.len() > 2 {
             return Err(failure("resource_limit"));
         }
-        let requirements = strategy.source_requirements();
+        Self::with_requirements(
+            strategy.source_requirements(),
+            markets,
+            bindings,
+            capabilities,
+        )
+    }
+    /// Fixed read-only catalog; no strategy, evaluator or capability authorization is created.
+    pub fn display() -> Result<Self, SourceFailure> {
+        let mut requirements = Vec::new();
+        for field in ["bid", "buyable_ask", "last_trade"] {
+            requirements.push(SourceRequirement {
+                input_id: field.into(),
+                source: Source::Kalshi,
+                instrument: "current_contract".into(),
+                field: field.into(),
+                unit: RuleUnit::ContractCents,
+                side: Some(SourceSide::Selected),
+                startup_ms: 0,
+                implicit: false,
+            });
+        }
+        for field in ["opening_reference", "settlement_reference"] {
+            requirements.push(SourceRequirement {
+                input_id: field.into(),
+                source: Source::Kalshi,
+                instrument: "current_market".into(),
+                field: field.into(),
+                unit: RuleUnit::UsdPerBtc,
+                side: None,
+                startup_ms: 0,
+                implicit: false,
+            });
+        }
+        for (id, source, field) in [
+            ("brti", Source::Brti, "index_value"),
+            ("coinbase", Source::Coinbase, "last_trade"),
+            ("kraken", Source::Kraken, "last_trade"),
+        ] {
+            requirements.push(SourceRequirement {
+                input_id: id.into(),
+                source,
+                instrument: "btc_usd".into(),
+                field: field.into(),
+                unit: RuleUnit::UsdPerBtc,
+                side: None,
+                startup_ms: 0,
+                implicit: false,
+            });
+        }
+        let bindings: Vec<_> = requirements
+            .iter()
+            .filter(|r| r.instrument == "btc_usd")
+            .enumerate()
+            .map(|(i, r)| BindingDescriptor {
+                binding_id: i as u32 + 1,
+                input_id: r.input_id.clone(),
+                scope: BindingScope::Underlying,
+            })
+            .collect();
+        Self::with_requirements(requirements, &[], &bindings, &[])
+    }
+    pub fn requirements(&self) -> &[SourceRequirement] {
+        &self.requirements
+    }
+    fn with_requirements(
+        requirements: Vec<SourceRequirement>,
+        markets: &[MarketDescriptor],
+        bindings: &[BindingDescriptor],
+        capabilities: &[(u32, Capabilities)],
+    ) -> Result<Self, SourceFailure> {
+        if markets.len() > 2 {
+            return Err(failure("resource_limit"));
+        }
         let mut state = Self {
             owner: NEXT_OWNER
                 .try_update(Ordering::Relaxed, Ordering::Relaxed, |n| n.checked_add(1))

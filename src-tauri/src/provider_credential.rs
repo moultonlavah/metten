@@ -1,5 +1,5 @@
 //! Fixed protected records. No arbitrary secret read or native command.
-#![allow(dead_code)] // Commands are deliberately deferred to step 5.
+#![allow(dead_code)] // Controlled store/signing seams are exercised by native owner tests.
 use crate::providers::{Environment, Failure, signing::Key};
 use serde::{Deserialize, Serialize};
 const RECORD_BYTES: usize = 20 * 1024;
@@ -180,7 +180,7 @@ pub mod native {
         }
     }
     impl Keychain {
-        pub(super) fn isolated(target: crate::credential::Bootstrap) -> Self {
+        pub(crate) fn isolated(target: crate::credential::Bootstrap) -> Self {
             Self {
                 isolated: Some(target),
             }

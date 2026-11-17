@@ -10,6 +10,7 @@ use rsa::{
 };
 use sha2::Sha256;
 
+#[derive(Clone)]
 pub enum Key {
     Ed25519(Box<ed25519_dalek::SigningKey>),
     Rsa(Box<rsa::pss::SigningKey<Sha256>>),

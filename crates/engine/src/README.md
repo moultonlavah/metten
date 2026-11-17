@@ -117,3 +117,17 @@ admission, change history/arithmetic or introduce an engine network dependency.
 Source storage is bounded by 34 requirement records (capacity at most 64), two market records (capacity at most four), 128 concrete bindings, six stream slots, three connections, 128-byte provenance/machine identities and 64-byte input IDs. Update and coverage vectors each admit at most 128 entries/capacity. One effect has at most 256 coherent value/validity members or two revocation transactions of at most 128 members each, with existing ingress accounting before acceptance. Caller-retained clones are outside this one-outstanding-effect/one-view contract; no effect queue, feed archive or history series exists here. Integer counters fail closed. Full type/ownership charges and check limits live in the issue-5 evidence record.
 
 Focused checks: `cargo test -p metten-engine --locked --test sources`, all ordinary engine tests, fmt/clippy and the unchanged release-hour fixtures. Public [source tests](../tests/sources.rs) exercise the actual source/evaluator seam. Internal source-counter and evaluator mask/allocation/work probes cover invariants not visible through public outcomes. None proves runtime delivery, source rights or live fills.
+
+### Fixed source display catalog (step 5)
+
+`SourceState::display()` initializes the eight fixed requirement records for
+read-only named-source setup without fabricating a strategy or evaluator. It
+shares bounded market/binding registration with `new`; current/next metadata is
+still discovered independently. Three underlying bindings exist initially;
+contract/reference bindings are registered with the two exact market slots.
+`requirements()` exposes borrowed immutable records to the native owner.
+Capabilities remain unsupported by default; a zero startup lookback is not proof
+of complete history. Native projections must check history capabilities as well
+as the existing zero-lookback readiness fact. Strategy grammar, arithmetic,
+financial decisions and SQLite revision 3 are unchanged. The public display
+catalog regression is in `crates/engine/tests/sources.rs`.

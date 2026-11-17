@@ -1,5 +1,5 @@
 //! Fixed native provider lifecycle, request policy and transport controls.
-#![allow(dead_code)] // Internal read-only context; command admission is deferred to step 5.
+#![allow(dead_code)] // Controlled source/evaluator interfaces are also exercised directly by owner tests.
 pub mod budget;
 mod coinbase;
 mod discovery;
@@ -10,11 +10,11 @@ pub mod signing;
 mod source;
 #[cfg(test)]
 mod tests;
-mod transport;
+pub mod transport;
 use source::SourceCommand;
 #[cfg(test)]
 use source::{SOURCE_STREAMS, ScheduleLoss, source_envelope};
-#[allow(unused_imports)] // Explicit native setup surface; no startup or IPC caller yet.
+#[allow(unused_imports)] // Source view types remain available to controlled native callers.
 pub use source::{SourceHandle, SourceView, SourceWorker};
 mod wire;
 use std::sync::{
@@ -155,6 +155,7 @@ pub struct Intake {
     pub receipt_ms: Option<u64>,
     pub source_tokens: Option<[metten_engine::sources::StreamToken; 6]>,
     progress: Option<watch::Sender<transport::Progress>>,
+    completion: Option<tokio::sync::oneshot::Sender<Result<(), Failure>>>,
     fence: Fence,
 }
 impl Intake {
@@ -173,6 +174,7 @@ impl Intake {
             receipt_ms: None,
             source_tokens: None,
             progress: None,
+            completion: None,
             fence: fence.clone(),
         }
     }
@@ -303,7 +305,32 @@ impl Default for Coordinator {
         Self::new()
     }
 }
+#[derive(Clone)]
+pub struct Revocation {
+    fences: [Fence; 3],
+    stop: watch::Sender<bool>,
+}
+impl Revocation {
+    pub fn revoke(&self) {
+        self.stop.send_replace(true);
+        for fence in &self.fences {
+            fence.revoke();
+        }
+    }
+}
 impl Coordinator {
+    pub fn revocation(&self) -> Revocation {
+        Revocation {
+            fences: self.fences.clone(),
+            stop: self.stop.clone(),
+        }
+    }
+    pub fn active(&self, provider: Provider) -> bool {
+        self.tasks
+            .iter()
+            .any(|(p, task)| *p == provider && !task.is_finished())
+    }
+
     pub fn new() -> Self {
         let (stop, _) = watch::channel(false);
         Self {
@@ -405,7 +432,7 @@ impl Coordinator {
         }
     }
     pub fn is_stopping(&self) -> bool {
-        self.stopping
+        self.stopping || *self.stop.borrow()
     }
     pub fn finished(&self) -> bool {
         self.tasks.iter().all(|(_, task)| task.is_finished())

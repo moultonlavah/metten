@@ -2,7 +2,7 @@
 
 Established as a documentation record on **2026-11-15** for step 1 of [issue #5](https://github.com/moultonlavah/metten/issues/5). **No connected source is accepted for runtime use by this guide.** Message mappings are documented below; freshness, continuity, permission and implementation gates remain open. A documented stop is a completed profile finding, not completed provider support.
 
-The [task brief](../proposals/issue-5-egm/source-profile-task-brief.md) bounds this work. The [approved sequence](../proposals/issue-5-egm/market-data-design.md#ordered-work-and-stopping-conditions), [product specification](../../METTEN_DESIGN_DRAFT_2026-11-12.md#9-security-sources-and-research-references), [ADR 0001](../adr/0001-rust-engine-and-tauri-boundaries.md) and [strategy reference](../strategies/reference.md#fields-and-variants) remain authoritative. This profile guide introduces no setup workflow, strategy syntax or new data product. The [native step-4 owner](../../src-tauri/src/README.md#step-4-read-only-source-owner) now exercises these mappings with synthetic messages and loopback peers; it registers no source command or automatic startup connection.
+The [task brief](../proposals/issue-5-egm/source-profile-task-brief.md) bounds this work. The [approved sequence](../proposals/issue-5-egm/market-data-design.md#ordered-work-and-stopping-conditions), [product specification](../../METTEN_DESIGN_DRAFT_2026-11-12.md#9-security-sources-and-research-references), [ADR 0001](../adr/0001-rust-engine-and-tauri-boundaries.md) and [strategy reference](../strategies/reference.md#fields-and-variants) remain authoritative. This profile guide introduces no setup workflow, strategy syntax or new data product. The [native step-4 owner](../../src-tauri/src/README.md#step-4-read-only-source-owner) now exercises these mappings with synthetic messages and loopback peers; the step-5 commands expose its local facts without automatic startup connections.
 
 ## What the named values mean
 
@@ -131,3 +131,9 @@ correspondence remains U4. Numeric-ID adapters retain latest-ID/price high-water
 facts across reconnect, not a universal historical conflict ledger. The
 [implementation record](../verification/issue-5.md#step-4-implementation-and-verification)
 identifies actual checks, ownership/refusal bounds and remaining qualification.
+
+## Step-5 setup disposition
+
+The Sources section now exposes explicit fixed-source Connect/Disconnect, local snapshot/details and immutable saved-strategy requirement inspection. Provider credentials are separate from preserved dummy verification. Connections remain session-local and start disconnected after reopening. Read/refresh/inspection makes no provider request. Kalshi/BRTI share the fixed Demo credential/socket while logical disconnect stays scoped; Coinbase/Kraken are separately named public-market connections.
+
+Received values show exact units/identity/age separately from usability and history. None of these commands resolves U1–U7 above: current strategy freshness/history/reference use, actual access and usage/retention rights remain unproved. No account/provider call or ordinary credential lookup was executed during the controlled implementation checks. Exact final evidence and packaged GUI/Keychain limitations are in the [issue-5 record](../verification/issue-5.md#current-evidence-index). Step6 calibration and qualification have not started.

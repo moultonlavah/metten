@@ -2,7 +2,9 @@
 
 ## Current evidence index
 
-**Latest outcome: bounded step-4 implementation passed the owner-requested two-round Sol review, with its handoff finding corrected and approved.** See [step-4 implementation and verification](#step-4-implementation-and-verification) for source identities, checks, reused evidence and limits. See the [Sol approval and checkpoint receipt](#sol-round-2-approval-and-checkpoint) for current delivery evidence. No step-5 commands/UI or production financial integration were started. The [final step-3 receipt](#final-step-3-receipt-and-limits) and subsequent correction receipt remain evidence for their identified source and unchanged boundaries. Earlier incomplete statuses are historical.
+**Current outcome: step-5 implementation and the owner-requested branding cleanup are present, with the packaged Sources GUI proof blocked.** Start at the [implementation receipt](#step-5-final-implementation-receipt): 237 ordinary Rust tests, 18 interface tests, correctness lint, Clippy, formatting, frontend/Mac bundle builds, process regressions and the finished bundle's isolated native credential check passed. The Sources walkthrough could not access its first WebKit input; guarded exit and owned cleanup passed. This is an implementation checkpoint, not full step-5 packaged acceptance or issue acceptance. All four issue criteria remain unproved as a whole.
+
+The unchanged [step-5 plan, revision 1](../proposals/issue-5-egm/step-5-plan.md) received [independent Sol plan approval](#step-5-independent-sol-plan-review), followed by Connor's explicit implementation approval. That review covers the plan, not this implementation. [Step-4 evidence and its Sol checkpoint](#sol-round-2-approval-and-checkpoint) remain reusable for unchanged boundaries. Calibration, frozen qualification, documentation/owner setup and separate external acceptance remain later gates. Earlier statuses below are historical.
 
 
 **Historical step-2 status: SP1 is corrected; covering checks pass and Sol approved the current behavior in round1 with no findings.** Start at the [late-verification correction](#sp1-late-verification-display-correction-and-sol-loop). The implementation is present against the [final step-2 plan](../proposals/issue-5-egm/step-2-plan.md), revision 5 (`528b87824818515a4349ee99b658f9bc77ed2deb532e514b26f7d7ffa8b60a76`). Owner authority: after reviewing the corrected scope and plain-language explanation, Connor explicitly said **“Okay I approve. Implement”**. This includes the named atomic evidence admission/paired-invalidity correction and shared registration checks. It does not authorize providers, accounts, credentials, UI, trading, dependencies, commits or publication.
@@ -1371,3 +1373,452 @@ preserved README/proposal/review files still match their pre-staging hashes.
 Final remote query at **2026-11-16 20:37:38 UTC** returned unchanged dc892f8.
 The bounded local commit follows this evidence; nothing is pushed or published,
 and no later stage or real-provider/financial capability is enabled.
+
+
+## Step-5 planning and remaining acceptance path
+
+### Selected checkpoint and published instruction activation
+
+Planning-only handoff, 16 November 2026. Selected worktree is
+`/Users/connormoulton/.t3/worktrees/metten/t3-5ff0c48e-8b502ba4b606ca11`, branch
+`t3/brainstorm-issue-5`. HEAD is the approved step-4 checkpoint
+`d593a13d9c175d747f44ca0b5e43b815656d12d2`, parent
+`cc22fa9d2e4e749df0ef624aac89fa7cc745700e`; no movement required reconciliation.
+The index was empty. The unrelated tracked docs/README edit and all 19 existing
+proposal/review files were present and preserved. No repeated step-4 commit,
+checkout/reset/rebase, staging, push or PR was performed.
+
+Authoritative remote from repository metadata is
+`https://github.com/moultonlavah/metten.git`. Independent live
+`git ls-remote --symref <remote> HEAD` at entry resolved `refs/heads/main` to
+**dc892f8e19c710cc2c435b43d90b14d440ff6730**; the timed refresh at
+**2026-11-16 20:53:38 UTC** returned the same branch/commit. This is fresh remote
+evidence, not origin/main. Objects were already available; no fetch/ref update
+was needed. The current lead explicitly loaded immutable root `AGENTS.md` and
+followed its `docs/agents/verification.md#published-instruction-discovery`.
+
+Applicable published sources consulted at that same commit: root AGENTS,
+verification (including discovery, bounded evidence reads, mixed checkpoints and
+maintainability review), maintainability, CONTRIBUTING, code-map, issue-tracker,
+triage-labels and domain guidance; also the actual lint config/npm commands,
+Foundation workflow and issue-53 evidence for the newly applicable lint path.
+Recursive published instruction discovery found root AGENTS only. Local discovery
+found root AGENTS only, with no additional applicable ancestor/nested file;
+Connor's standing and project instructions were also supplied directly in the
+handoff. The older local entry lacks the published maintainability/discovery
+pointers; the immutable published sources were used without importing unrelated
+main code. The published frontend map points to view.ts/shared harness work that
+is absent here: local view.mjs/view.d.mts and the actual VM callers were traced.
+No missing required repository guidance or unresolved consequential process
+conflict was identified. No new session/agent was started; this receipt proves
+activation only for this lead, not installation/delivery to unknown sessions.
+
+Local behavioral/ownership inputs consulted: product specification, ADR0001,
+glossary, approved design and step-2/step-4 plans, local code map and verification
+procedures, engine/native/package/frontend/tool/test contracts, source profiles
+and U1–U7, current issue-5 index and relevant step-3/step-4/Sol/checkpoint receipts.
+Consequential claims were checked against actual Workspace/admission/Quit code,
+SourceWorker/SourceView/SourceHandle/Coordinator, transport/fence/control paths,
+fixed provider credentials and Bootstrap activation, engine saved-detail and
+requirement APIs, frontend refresh/credential/strategy handlers and VM callers,
+runner modes/process tests, build command registration/capabilities and selected
+lint/tooling files. These were bounded contract/source reads, not a whole-repo
+code audit or new runtime verification.
+
+Approved working-copy identity checks passed at entry and refresh:
+
+| Input | SHA-256 |
+| --- | --- |
+| market-data-design.md | `21e2926329f67fef05b264dcb8a0dfca0455aaa697c753bfc4f2d95b19fe4bc7` |
+| step-2-plan.md, revision 5 | `528b87824818515a4349ee99b658f9bc77ed2deb532e514b26f7d7ffa8b60a76` |
+| step-4-plan.md, revision 2 | `c18c4d20b4f65890d49b4366455fbd77d701504830192d82df754614ad192322` |
+
+Fresh read-only `gh issue view 5 --repo moultonlavah/metten` (including comments,
+labels, assignee and Project items), native blocked_by/sub_issues REST and parent
+GraphQL reads confirm: OPEN, all four criteria unchecked, zero comments, no
+assignee, product / priority:high / ready-for-agent, Project Backlog, native/body
+blockers #3/#4 closed, no children returned, no parent. Blocker states were
+reconfirmed at the timed refresh. The body retains an old owner-form product
+link; the canonical selected repository specification was read directly, not
+silently rewritten. Owner exclusions override routine workflow mutation steps:
+no tracker metadata, comment or closure was changed. Next actor is Connor,
+reviewing this local plan; external access and later stages remain unauthorized.
+
+### Concrete plan and maintainability disposition
+
+Prepared [step-5-plan.md](../proposals/issue-5-egm/step-5-plan.md), revision 1.
+It names four bounded gates: command/ownership integration, truthful Sources UI,
+sole private packaged receiver/walkthrough, and affected checks/evidence. The
+ordered later map separates offline exploratory calibration, frozen criteria,
+exact-candidate qualification, actual documentation and externally authorized
+acceptance. U1–U7 remain attached to affected criteria; no fixture grants a
+freshness lease, quiet-history guarantee, reference mapping, entitlement or rights.
+
+The expected path is real source owners/credential admission → finite native
+projection → literal screen; the private validated receiver feeds the same decoder
+and source publication path. No new source-state owner or descriptor reader is
+planned. The existing native-only packaged credential check is explicitly reused
+and extended at its existing validated bootstrap owner; it is not mistaken for
+the future source-frame protocol or GUI/ordinary Keychain acceptance.
+
+Two proposed inventory departures are explicit for owner review: a fixed display
+constructor sharing the engine source constructor's registration checks (Connect
+has no strategy selector, while current preparation requires a validated strategy),
+and narrow adoption of published pinned Oxlint config/tools/npm commands plus its
+existing workflow invocation. Neither is implemented. No synthetic saved strategy,
+rule evaluator, source plugin framework, new runtime library or broad main-branch
+frontend refactor is proposed. All new structure/checks have current named callers.
+
+Ponytail and Impeccable planning guidance were consulted. Existing product and
+visual implementation are the brief; planning adds no product/design setup
+artifacts, hooks or redesign. Impeccable context was read for src/main.ts; no
+UI implementation, detector run or browser verification was performed. Owner's
+precise task and planning-only artifact scope govern any broader skill workflow.
+No subagents, Council, independent review workflow or scores were requested/run.
+
+### Evidence reuse and remaining limits
+
+Completed evidence is reused from the step-4 checkpoint: 223 ordinary Rust tests
+(89 native, 134 engine), strict workspace/all-target Clippy, formatting/whitespace,
+frontend and Mac bundle build, staged tree bf9ac69d8ccbb40800737eaec8e5e7deebf20faa
+with documentation-only receipt changes afterward, and two-round high-effort Sol
+approval after corrected handoff regression. This task ran no application tests,
+build, benchmark, Keychain access, provider call or packaged walkthrough. The plan
+labels every new native/UI/protocol/integrated check proposed. Release-hour,
+storage/arithmetic, Python and isolated native/package evidence is reusable only
+for its unchanged boundaries and identified version; changed shared bootstrap/
+runner/admission paths require the affected new evidence. Remote CI is unverified.
+
+The dummy GUI blocker (inaccessible WebKit controls) remains. The plan does not
+rerun that known blocked route solely for reassurance; future affected GUI proof
+must be identified separately from native publication/IPC/credential proof.
+Ordinary data-protection-Keychain entitlements/prompts and GUI acceptance remain
+unproved. Real delivery/access/retention/legal clearance and production capacity
+remain separate missing gates. No issue acceptance box was completed.
+
+Planning completion checks and final freshness/preservation results follow below.
+
+
+Final planning checks passed: all 15 local links/anchors in the new plan and
+receipt resolve; approved-document hashes match; all 20 preserved README/proposal/
+review inputs match the preservation manifest; selected HEAD/parent remain the
+approved checkpoint and index remains empty. New plan/receipt whitespace and
+`git diff --check` pass. The only task edits are the new untracked step-5 plan and
+this record/index; the existing docs/README edit remains byte-identical.
+Manual consistency review covered command selectors and positive decimal IDs,
+source/credential/Quit ordering, fixed display ownership, one read in flight,
+byte/deadline profiles, sole receiver/ack failure cases, lint path, U1–U7 and all
+four acceptance criteria. This is a lead planning check, not independent code
+review or executed future-test evidence.
+
+Final delivery freshness query at **2026-11-16 20:55:35 UTC** returned unchanged
+main/dc892f8e19c710cc2c435b43d90b14d440ff6730; no affected guidance repetition was
+needed. Step-5 revision-1 SHA-256 is
+`7582746f163c364e21f901cffc9f699f30263e7110932909fade88ad0f285a59`.
+Stop here for Connor's review and explicit implementation authorization. A fresh
+implementation session must independently refresh guidance and report its loaded
+entry/revision/discovery; no activation of a future session is inferred here.
+
+
+## Step-5 independent Sol plan review
+
+Connor subsequently requested: “Review it with a Soul 6.1 subagent before
+presenting anything to me.” Interpreted as GPT-6.1 Sol, consistent with the prior
+step-4 reviewer. Invoked one native review subagent with the explicit
+`gpt-6.1-sol` model override, a fresh bounded brief and no parent history.
+Canonical task: `/root/step5_plan_review`. No other reviewer or workflow was
+started. The brief authorized read-only plan/source investigation only; the
+reviewer changed no files, index or refs and ran no implementation/build/runtime
+checks. This request authorizes review, not step-5 implementation.
+
+**Verdict: APPROVE — no blocking or should-fix finding in revision 1.**
+Reviewed plan SHA-256 remains
+`7582746f163c364e21f901cffc9f699f30263e7110932909fade88ad0f285a59`;
+HEAD remains `d593a13d9c175d747f44ca0b5e43b815656d12d2`. All four supplied
+plan/design identities matched independently. No correction/re-review was needed.
+
+The reviewer independently loaded published root AGENTS at the pinned
+`dc892f8e19c710cc2c435b43d90b14d440ff6730` and traversed discovery/verification,
+maintainability, CONTRIBUTING, map, domain, issue/triage and SECURITY guidance,
+plus applicable local instructions, product/ADR/glossary, original plans/protocol,
+evidence, component contracts and consequential source/callers. Published/local
+discovery found root AGENTS only. It reported no unavailable required process
+guidance or consequential instruction conflict. Newer published frontend layout
+and lint requirements were reconciled against this older worktree's actual files.
+This explicitly refreshes the targeted reviewer session; no other-session or
+shared-host delivery claim follows.
+
+The lead accepts the review after reading its source-grounded dispositions:
+
+- Fixed display initialization is justified: existing `SourceState::new` and
+  `SourceWorker::prepare` derive from a validated strategy, whereas independent
+  named-source Connect has no strategy selector. Sharing bounded registration
+  checks without a fabricated strategy or competing state owner is appropriate.
+- Narrow pinned lint adoption is required by current published guidance. Actual
+  view.mjs/view.d.mts coverage probes are required, rather than assuming main's
+  view.ts inventory covers this layout.
+- Command admission/moved ownership and persistent revocation address the actual
+  current Quit take-owner assumption. Blocking native operations, retained joins,
+  one total source deadline and fresh-generation refusal are concrete checks.
+- Independent Kalshi/BRTI desired membership and stream fencing preserve shared
+  socket ownership; restarting that socket is not accepted as scoped disconnect.
+- Exact decoding, decimal-string wire fields, encoding caps and projection-time
+  fence checks cover the gap between internal SourceView and native IPC.
+- Private source protocol matches the approved design: one validated receiver,
+  immutable isolated mode, no production fallback and acknowledgment only after
+  accepted or explicitly invalid publication. Existing credential-only checks,
+  enqueue success and revision changes cannot substitute for that proof.
+- Proposed tests expose wrong outcomes and request counts; evaluator evidence
+  reuse remains conditional on unchanged assumptions. Calibration, frozen
+  qualification, U1–U7 and actual GUI/Keychain/account/rights acceptance remain
+  separate gates.
+
+Remaining implementation risks are the mutation/Quit handoff, shared-socket
+membership changes and cancellation of completion replies without late
+publication. The approved plan requires focused failure checks for each; this
+review executes none of that behavior. WebKit GUI and ordinary data-protection
+Keychain acceptance remain unproved. Approval establishes a viable proposed
+approach, not implementation correctness, external acceptance or issue closure.
+
+Lead delivery query at **2026-11-16 21:55:41 UTC** again resolved authoritative
+main to unchanged dc892f8e19c710cc2c435b43d90b14d440ff6730. No guidance change
+requires affected re-review. Final plan identity, receipt links/whitespace and
+preserved-work checks passed. Only this existing evidence record/index changed
+for review delivery; the plan and application sources were not edited. Stop for
+Connor's review and implementation authorization; no commit or publication.
+
+
+## Step-5 authorized implementation
+
+Connor approved the independently reviewed revision-1 plan: “I approve. Implement step 5,” and explicitly reiterated alignment with coding/maintainability standards. Selected HEAD remains d593a13d9c175d747f44ca0b5e43b815656d12d2. Preserve existing evidence/proposal files and unrelated docs/README edit; no commit/publication or step 6 is authorized.
+
+Fresh remote/default query resolves https://github.com/moultonlavah/metten.git main to f4a22ea67fbf26eb57fc0f98fb19bfba47166150. Loaded immutable root AGENTS, discovery/verification, maintainability, CONTRIBUTING, domain, code-map and applicable issue/triage guidance. Relative to the reviewed dc892f8 baseline only unrelated workflow-map navigation changed in applicable guidance. Use published lint requirements with this selected worktree's actual mjs/d.mts layout. Objects already existed; no fetching/tracking-ref/index/HEAD movement. Current issue remains open, all criteria unchecked/no comments, blockers 3/4 closed.
+
+Expected change path is the approved plan's inventory: shared fixed display registration → existing native worker/coordinator/credential owners → finite native projection/admission → Sources interface, with the sole validated private receiver feeding actual decoder/publication. Keep one owner per mutable fact; preserve strategy arithmetic, financial semantics, SQLite revision3, pinned toolchain and unrelated work. Required meaningful checks are plan gates1–4. The published source discovery is activated for this lead; no additional agent or free-model dispatch is being started.
+
+Implementation inventory refinement: scoped disconnect/reconnect also reaches the existing Kalshi decoder's subscription identity owner (`providers/kalshi.rs`). A retired SID must release its bounded slot and book baseline without resetting the shared BRTI stream; late data for a disabled logical subscription must be ignored without revoking the shared provider. This is necessary for the approved logical-disconnect contract, not a new provider feature. Add a focused reconnect/late-SID regression; keep original plans unchanged.
+
+Owner steering during implementation: “/unslop this ui after you are done or after a first pass,” followed by “And using our branding standards.” After the first functional pass, read the accepted brand README, specifications and complete guide; reused the unchanged approved primary SVG at255.42px canvas (~240px visible), cobalt/ink/chalk and Inter400/500/600. The authorized visual pass moves Sources first, replaces repeated cards/technical row output with flat concise rows and disclosures, and preserves all existing controls. A pinned, unmodified Inter runtime font and its upstream OFL/provenance were added under assets/fonts; no artwork or master geometry was changed. This explicitly expands the initial plan's legacy-green preservation instruction under the owner's newer branding request.
+
+Focused implementation corrections included: initial controlled dispatch demonstrated the startup membership/token race (failed before, passed after publication acknowledgment); shared-control ledger caught an extra unsubscribe on a blocked-but-enabled stream (corrected, seven-control regression passes); source SID retirement handles logical reconnect without a new socket; pending Connect captures a checked intent revision so immediate Disconnect cannot be undone. The watch record carries mandatory revocation revisions, and an off/on coalescence regression confirms old permission is not restored. No new source-state owner, descriptor reader or per-message task was introduced.
+
+
+## Step-5 final implementation receipt
+
+**Implemented; packaged Sources GUI acceptance remains blocked.** This is an
+uncommitted working-copy checkpoint on d593a13d9c175d747f44ca0b5e43b815656d12d2,
+not an accepted release or completed issue. Connor's implementation approval and
+later visual/branding steering are recorded above. The independent Sol approval
+covers the unchanged plan only; the lead reviewed the implementation and its
+connected callers. No independent implementation review was requested or claimed.
+
+### Final discovery and preservation
+
+Delivery query at **2026-11-16 23:49:01 UTC** independently resolved authoritative
+https://github.com/moultonlavah/metten.git, default main, to unchanged
+**f4a22ea67fbf26eb57fc0f98fb19bfba47166150**. Loaded published root AGENTS and its
+verification/discovery, maintainability, CONTRIBUTING, code-map, issue/triage,
+domain and security guidance, with applicable local root instructions and original
+product/ADR/design/plans/component contracts. Only root AGENTS was found locally
+and in published discovery. No required guidance is missing or consequential
+instruction conflict unresolved. This older worktree uses its actual mjs/d.mts
+frontend; no main-branch frontend refactor was imported. Tracker mutations remain
+outside authority. No other session's activation or host-wide enforcement is
+inferred.
+
+All **21** files in the implementation-entry preservation manifest remain
+byte-identical, including unrelated docs/README and every pre-existing proposal
+artifact. The approved design, step-2/4 plans and reviewed step-5 plan still match
+their recorded SHA-256 identities. HEAD/parent, existing refs and empty index are
+preserved; no commit, push, PR, issue write or closure. No application state,
+ordinary credential item or provider/account service was accessed by verification.
+
+Candidate identity: **42** changed/new implementation, test, tooling, asset
+and owning-contract paths, excluding this evolving receipt, unrelated docs/README
+and preserved docs/proposals. Sort their relative paths, concatenate each
+`SHA256(file)`, two spaces, path and newline, then hash that UTF-8 manifest:
+**3e4a44f922f6557dd2823578ef0aa1949444dbfe72c72a88994d39433791842b**. Paths come from the union of
+`git diff --name-only --diff-filter=ACM` and
+`git ls-files --others --exclude-standard`, with the exclusions just stated.
+This is a working-copy identity, not a Git tree or reviewed commit.
+Finished bundle executable SHA-256:
+**5316ca3988ec0ea9a1c226a939c93e959d75908e21e41f6899fe8474a8b88a03**.
+Bundle size reported by Tauri: **17.12 MiB**. Only documentation changed afterward.
+
+### Implemented route and maintained bounds
+
+The [code map](../agents/code-map.md#step-5-source-setup-and-verification-route)
+and [native contract](../../src-tauri/src/README.md#step-5-source-commands-and-isolated-receiver)
+lead to the real owners and checks. Fixed engine display registration reuses the
+existing validation owner without a fabricated strategy or evaluator. Native
+`sources` and `provider_credential` decode exact finite requests, use fixed Demo
+configuration, sanitize failures, and expose only local-main permissions. Local
+snapshot/details/requirements reads do not connect or make provider requests.
+No source activity starts merely by opening, refreshing, inspecting, saving a key
+or starting the existing controlled session.
+
+The same Coordinator, credential owner, SourceWorker/SourceState and transport
+own the mutable facts. Four logical sources share three connections; Kalshi/BRTI
+share the credential/socket while disconnect fences only the requested logical
+source. Exclusive mutation work moves owned handles into blocking work and
+restores them on failure. Pending Connect cannot undo a later Disconnect; checked
+revocation revisions survive off/on watch coalescence. Credential replacement
+stops/joins shared work before mutation. Quit revokes before waiting, retains
+unfinished handles and refuses a false successful save/exit.
+
+The display catalog has eight requirement records, three initial underlying
+bindings and at most nineteen bindings with two retained markets. Existing
+32-MiB adapter payload admission, two-book/8192-level-side bounds, one raw queue
+slot/two-second age ceiling, three task slots and the engine's 8-MiB/4096-work
+boundaries remain unchanged. No financial arithmetic, strategy semantics,
+SQLite revision, Cargo dependency or pinned toolchain change. Snapshot/details
+encode to at most256KiB; a512-KiB shared reservation remains owned through response
+serialization. Source fixture envelopes are at most256KiB with128-KiB lexical
+payload, with640KiB reserved for frame/decoded overlap plus the separately charged
+intake copy. These are application ownership arguments, not RSS or capacity
+qualification. No raised limit or granted freshness/history capability supplies
+missing provider proof.
+
+The sole validated bootstrap/descriptor reader selects dummy or Sources mode.
+Sources mode is immutable and its ordinary credential/production transport paths
+are refused, including after EOF/protocol failure. Exact session, canonical
+string sequence and bounded envelopes feed the real decoder/worker. Ack1 follows
+accepted or explicitly invalid published native state; it does not mean healthy
+data or GUI paint. Cancellation, failed/late acknowledgment and receiver failure
+revoke fixture evidence and retain owned shutdown handles.
+
+The interface serializes local reads at the approved one-second active-screen
+cadence, discards stale replies, clears private-key input before invocation, and
+renders provider facts literally. Last values, units, identities and receipt ages
+remain distinct from freshness/history/rights. The visual pass uses the unchanged
+approved lockup, cobalt/ink/chalk and locally bundled Inter400/500/600; Sources
+comes first in flat rows with optional details. Existing session, saved strategy,
+dummy credential, history and recording controls remain. The Inter file/license
+have pinned official provenance in [assets/fonts](../../assets/fonts/README.md).
+
+No runtime dependency, new source platform, duplicate state owner or descriptor
+reader was added. Two pinned development lint packages and published correctness
+configuration are the required narrow tooling addition; the existing Foundation
+job runs the same command. Actual mjs, declaration and test coverage were checked;
+a temporary floating typed promise and unreachable JS probes failed as intended,
+and handled/clean code passed after exact-byte restoration.
+
+### Executed checks and limits
+
+- `cargo test --workspace --locked --quiet`: **237 ordinary tests passed**
+  (102 native,135 engine); one isolated Keychain test and two release-hour
+  fixtures remain intentionally outside this ordinary run. Native real-owner
+  tests cover finite/oversized inputs, exact decimal IDs, local-only inspection,
+  main-window authority, scoped membership/SID retirement, shared credentials,
+  pending Connect cancellation, invalid decoder publication and production refusal.
+- Real Unix-socket protocol tests passed: wrong mode/session/provider/kind/field,
+  duplicate/skipped/noncanonical sequence, oversize/partial/deadline framing,
+  dispatch-before-ack ordering, no controlled connection, late completion,
+  EOF/Quit during dispatch and failed acknowledgment. Invalid data is explicitly
+  invalid before successful acknowledgment through the real worker test.
+- `cargo clippy --workspace --all-targets --locked -- -D warnings`,
+  `cargo fmt --all --check` and `git diff --check`: **passed**.
+- `npm run lint`, `npm run check`: **passed**, including all18 interface tests.
+  These exercise actual frontend entry points for literal rendering, immediate
+  secret clearing, serial active-only reads, exact large revisions and stale
+  success/failure/action suppression. Existing session/strategy/dummy cases pass.
+- Locked frontend build and `npm run tauri build -- --bundles app`: **passed**
+  on the final application source, with local SVG/font artifacts emitted.
+- `python3 tests/credential-runner.test.py`: **passed** on the final Swift runner,
+  covering all three mode selectors, lexical framing/sequence, rejected/late/
+  closed acknowledgments, retained child ownership, noisy output and cleanup.
+- Finished bundle `--provider-credentials`: **passed** save/duplicate/replace/
+  fixed-read/local signature/remove, actual process exit, marker scans and owned
+  disposable Keychain/directory deletion. Default/search-list metadata remained
+  identical after cleanup. This uses generated controlled material only.
+- Finished bundle `--sources`: **BLOCKED**, not passed. The runner opened Sources
+  and its credential disclosure, then could not find `provider-key-id` through
+  WebKit Accessibility. No generated key was entered and no source frame was
+  dispatched. Guarded window-close confirmed successful actual app exit; exact
+  owned disposable Keychain/directory were deleted and global metadata stayed
+  unchanged. No bypass, app kill or unchanged dummy-GUI rerun followed.
+- Controlled headless rendering passed at1100,640,390 and320px, including locally
+  loaded Inter, approved lockup size, keyboard focus and no horizontal overflow.
+  Rendered desktop/mobile output was visually inspected. This used the explicitly
+  resolved automation-only Chromium headless shell and a disposable profile;
+  Browser.close, actual exit and profile deletion were confirmed. Its local native
+  response shim establishes presentation only, not packaged IPC or WebKit access.
+
+The optional Impeccable scan reported preserved proposal HTML warnings, a CSS-import
+heading-size false positive and a generic Inter warning. The proposal is unrelated
+and unchanged; actual rendered headings were32/20px, and Inter is owner-required
+branding. No mechanical clean-scan or whole-product branding claim follows.
+
+Reused evidence: unchanged engine arithmetic/history and release-hour fixtures,
+existing storage/revision3 and staged-snapshot-helper behavior retain their
+recorded step-4/earlier evidence. The display constructor and native/UI seams got
+fresh focused/full ordinary checks. No new staged export is claimed with an empty
+index and no checkpoint commit authorized. Shared bootstrap/protocol changes got
+fresh dummy/native tests and process regressions plus the packaged credential
+check. The known-inaccessible dummy GUI remains blocked; its old walkthrough was
+not repeated. Ordinary data-protection-Keychain entitlements/prompts and GUI
+acceptance are not established by the isolated native check.
+
+### Remaining gates and acceptance
+
+First obtain the missing ordinary packaged Sources/UI evidence, including visible
+secret clearing, credential lifecycle, four logical sources, scoped disconnect,
+invalid frame visibility and successful final guarded Quit. The narrow blocker
+is WebKit Accessibility field access in the owned test app. Resolve that adapter
+or perform an explicitly owned manual walkthrough of this exact bundle; preserve
+isolation and acknowledgment semantics. Unit/process/render results cannot replace
+that gate. Independent implementation review remains a separate possible owner
+request; only plan review is currently independently approved.
+
+After the bounded implementation and missing integrated proof are accepted,
+step6 begins separately authorized exploratory offline calibration. Record all
+failures, then freeze workload/environment/byte-age limits/numeric thresholds
+before a distinct qualification run on the exact candidate. Include active-screen
+contention, parser/book sizes, simultaneous ownership, queue age/loss, completion
+delay, resource plateau, rollover and request/control counts. Preserve limits and
+strategy observation semantics; never filter failures or raise limits for a pass.
+Finish actual contracts, owner setup guide and criterion-specific evidence through
+the ordered [remaining-work map](../proposals/issue-5-egm/step-5-plan.md#ordered-route-after-step-5).
+
+U1–U7 remain unresolved in the [source capability register](../sources/README.md).
+Public official documentation can support bounded research; actual account/data
+availability, owner-selected policy, usage/legal rights and external qualification
+need their explicit decisions or separately authorized access. Missing proof stays
+attached to the affected criterion. All four issue acceptance criteria remain
+unchecked/unaccepted; no real-provider delivery, ordinary Keychain/GUI acceptance,
+remote CI, production capacity, account access, trading or publication is claimed.
+
+Final affected Markdown paths/anchors and whitespace passed after the receipt update.
+All21 preserved-file identities, the42-path candidate manifest, empty index and
+unchanged HEAD were rechecked. No owned packaged app, runner or test browser
+remained running at delivery. All changes after the final application build were
+documentation only; no repeated application run is needed for those edits.
+
+
+## Step-5 owner-authorized checkpoint commit
+
+Connor subsequently instructed “Commit it.” This authorizes a local checkpoint
+commit of the implemented step-5 scope and this evidence, not publication, step6
+or issue acceptance. Fresh authoritative remote/default query again returned
+main/f4a22ea67fbf26eb57fc0f98fb19bfba47166150. Root AGENTS and the published
+verification/checkpoint procedure were reread; the unchanged applicable discovery
+set and previously consulted standards remain the baseline. No new missing
+guidance or consequential conflict. The42-path candidate manifest still matches
+the final implementation receipt; all21 preserved files remain identical.
+
+Stage only those42 paths plus this record. Exclude unrelated docs/README and all
+proposal/review artifacts. Verify the disposable staged snapshot using the
+existing helper before committing. Earlier application/build/package evidence
+remains evidence for byte-identical code; the packaged Sources GUI blocker and
+all external acceptance limits remain unresolved.
+
+Disposable staged snapshot **79b9763bc1b2b074410d7f9ddc69a11d3833b331** passed
+exact identity checks for all43 staged paths, offline locked npm installation,
+correctness lint, all18 interface tests, frontend build and all237 ordinary Rust
+workspace tests. The helper removed its disposable export after success. Only
+this documentation receipt changed afterward; no application/test/tooling/asset
+bytes changed. Reused Clippy/formatting/Mac bundle/native credential evidence
+remains applicable to the identical code. The final staged export rechecks that
+identity and whitespace with this receipt included, without rerunning unchanged
+behavior. Delivery remote refresh again returned unchanged main/f4a22ea67.
+The checkpoint preserves the explicitly recorded Sources GUI blocker.

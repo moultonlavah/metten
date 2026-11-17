@@ -78,6 +78,7 @@ impl Drop for InFlight<'_> {
 }
 pub struct Transport {
     environment: Environment,
+    isolated: bool,
     client: reqwest::Client,
     budgets: [Arc<std::sync::Mutex<Budget>>; 3],
     memory: memory::Memory,
@@ -88,6 +89,15 @@ pub struct Transport {
     peer: Option<std::net::SocketAddr>,
 }
 impl Transport {
+    pub(crate) fn isolated() -> Result<Self, Failure> {
+        let mut t = Self::new(Environment::Demo)?;
+        t.isolated = true;
+        Ok(t)
+    }
+    pub fn is_isolated(&self) -> bool {
+        self.isolated
+    }
+
     pub fn new(environment: Environment) -> Result<Self, Failure> {
         let client = reqwest::Client::builder()
             .https_only(true)
@@ -100,6 +110,7 @@ impl Transport {
             .map_err(|_| Failure::Transport)?;
         Ok(Self {
             environment,
+            isolated: false,
             client,
             budgets: std::array::from_fn(|_| Arc::new(std::sync::Mutex::new(Budget::new()))),
             memory: memory::Memory::default(),
@@ -221,6 +232,9 @@ impl Transport {
         deadline: Instant,
         fence: &Fence,
     ) -> Result<memory::Bytes, Failure> {
+        if self.isolated {
+            return Err(Failure::InvalidRequest);
+        }
         let deadline = deadline.min(Instant::now() + Duration::from_secs(10));
         fence
             .run(deadline, self.get_once_owned(route, stop, deadline, fence))
@@ -234,6 +248,9 @@ impl Transport {
         deadline: Instant,
         fence: &Fence,
     ) -> Result<Connection, Failure> {
+        if self.isolated {
+            return Err(Failure::InvalidRequest);
+        }
         let deadline = deadline.min(Instant::now() + Duration::from_secs(10));
         let work = async {
             loop {
@@ -900,9 +917,7 @@ impl Progress {
             self.tokens[Stream::Book as usize] = Some(*token);
         }
         let i = stream as usize;
-        if self.disabled[i] {
-            return;
-        }
+        self.disabled[i] = false;
         if let Control::KalshiIndexes {
             token: Some(token), ..
         } = command

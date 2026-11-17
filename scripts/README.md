@@ -46,3 +46,32 @@ markers and dummy values, and verifies unchanged global Keychain metadata.
 Invalid bootstrap fails closed before ordinary startup. It never connects to a
 provider or reads ordinary credential items. This is not the step-5 source-frame
 walkthrough. Default dummy UI mode remains separate, including its prompt checks.
+
+## Isolated sources walkthrough (step 5)
+
+`swift scripts/verify-credential.swift --sources <finished.app>` selects a strict
+sources bootstrap and an owned disposable workspace/Keychain, opens Sources and
+uses ordinary provider credential/source commands through Accessibility. Controlled
+RSA keys are generated in memory by the installed OpenSSL tool; they are never
+arguments, files or output. The walkthrough checks save/duplicate/replace/reopen/
+remove, four logical connections over the controlled native connections and
+synthetic provider frames. Payload strings retain lexical numbers. Every frame
+waits for its native publication acknowledgment before the next is sent.
+
+The native source mode is permanently isolated, including after channel failure;
+it cannot read ordinary credential items or construct production requests. No
+account/provider/paid access is authorized by this tool. The early
+`--provider-credentials` native signature/fixed-item check remains a distinct mode.
+Default dummy behavior remains unchanged; the three walkthrough modes are not
+interchangeable acceptance evidence.
+
+Source framing uses four-byte big-endian length, 256-KiB envelope/128-KiB payload,
+exact session and positive canonical decimal-string u64 sequence. Native reads
+and processing/ack phases each have a two-second total deadline; the runner's
+ack wait is at most three seconds. Ack1 follows accepted or explicitly invalid
+native publication, not GUI painting. Failed/late ack, EOF or Quit fails and
+revokes fixture evidence. The runner preserves exact-child exit observation,
+marker scans, unchanged global Keychain metadata and owned-only cleanup. If
+WebKit controls are inaccessible, record that concrete GUI blocker; never claim
+native-only or process-only checks establish the walkthrough. Do not rerun an
+unchanged known-blocked dummy GUI route merely to repeat it.

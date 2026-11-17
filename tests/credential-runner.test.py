@@ -42,6 +42,7 @@ class CredentialRunnerRecovery(unittest.TestCase):
             self.assertIn("late child exit recovered, channels closed, unsuccessful exit stays failed", result)
             self.assertIn("noisy child exited within deadline; all output captured and markers rejected", result)
             self.assertIn("provider mode, bootstrap shape, rejected/late/closed acknowledgments", result)
+            self.assertIn("sources mode, decimal sequence, lexical payload and bounded envelope", result)
             print(result, end="")
 
 

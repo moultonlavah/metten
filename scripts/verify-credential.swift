@@ -50,7 +50,8 @@ let b = "metten-dummy-" + UUID().uuidString
 let password = UUID().uuidString + UUID().uuidString
 func providerMode(_ arguments: [String]) throws -> Bool {
     if arguments.count == 2 && arguments[0] == "--provider-credentials" { return true }
-    try require(arguments.count == 1 && !arguments[0].hasPrefix("--"),"supply finished .app path or --provider-credentials .app")
+    if arguments.count == 2 && arguments[0] == "--sources" { return false }
+    try require(arguments.count == 1 && !arguments[0].hasPrefix("--"),"supply finished .app path, --provider-credentials .app or --sources .app")
     return false
 }
 func bootstrap(_ targetPath: String, _ device: Any, _ inode: Any, providerCheck: Bool) -> [String:Any] {
@@ -86,6 +87,80 @@ func expectation(_ marker: String, sequenceOverride: Int? = nil) throws {
     setsockopt(socket,SOL_SOCKET,SO_RCVTIMEO,&timeout,socklen_t(MemoryLayout<timeval>.size))
     var ack: UInt8 = 255
     try require(read(socket,&ack,1) == 1 && ack == (sequenceOverride == nil ? 1 : 0), "expectation receipt rejected or timed out")
+}
+func sourceEnvelope(_ provider: String, _ payload: String, _ number: UInt64) throws -> [String:Any] {
+    try require(["kalshi","coinbase","kraken"].contains(provider) && number > 0,"invalid source frame identity")
+    try require(payload.utf8.count <= 128*1024,"source payload too large")
+    let envelope: [String:Any] = ["session":session,"sequence":String(number),"kind":"provider_frame","provider":provider,"payload":payload]
+    try require(try JSONSerialization.data(withJSONObject:envelope).count <= 256*1024,"source envelope too large")
+    return envelope
+}
+var sourceSequence: UInt64 = 0
+func sourceFrame(_ provider: String, _ payload: String) throws {
+    try require(sourceSequence < UInt64.max,"source sequence exhausted")
+    sourceSequence += 1
+    var timeout = timeval(tv_sec:2,tv_usec:0)
+    try require(setsockopt(socket,SOL_SOCKET,SO_SNDTIMEO,&timeout,socklen_t(MemoryLayout<timeval>.size)) == 0,"source write deadline unavailable")
+    try send(sourceEnvelope(provider,payload,sourceSequence))
+    try providerAck(timeout:3)
+}
+func activateSources() throws {
+    let deadline=Date().addingTimeInterval(4)
+    while Date()<deadline {
+        let matches=appNodes().filter {text($0).trimmingCharacters(in:.whitespaces)=="Connections and received data"}
+        if appNodes().contains(where:{(attribute($0,kAXIdentifierAttribute) as? String)=="source-coinbase-connect" || (attribute($0,"AXDOMIdentifier") as? String)=="source-coinbase-connect"}) {return}
+        if matches.count==1 && AXUIElementPerformAction(matches[0],kAXPressAction as CFString) == .success {return}
+        usleep(50_000)
+    }
+    throw Failure(message:"BLOCKED: owned Sources controls are not accessible through WebKit")
+}
+func sourceFill(_ identifier: String, _ value: String) throws {
+    let matches=appNodes().filter {(attribute($0,kAXIdentifierAttribute) as? String)==identifier || (attribute($0,"AXDOMIdentifier") as? String)==identifier}
+    try require(matches.count==1,"BLOCKED: owned Sources input unavailable: " + identifier)
+    try require(AXUIElementSetAttributeValue(matches[0],kAXValueAttribute as CFString,value as CFString) == .success,"Sources input entry failed")
+}
+func sourcePress(_ title: String) throws {
+    let deadline=Date().addingTimeInterval(4)
+    while Date()<deadline {
+        let matches=appNodes().filter {node in [kAXTitleAttribute,kAXDescriptionAttribute].contains { (attribute(node,$0) as? String)==title }}
+        if matches.count==1 && AXUIElementPerformAction(matches[0],kAXPressAction as CFString) == .success {return}
+        usleep(50_000)
+    }
+    throw Failure(message:"BLOCKED: owned Sources control unavailable: " + title)
+}
+func controlledPem() throws -> String {
+    let process=Process(), output=Pipe()
+    process.executableURL=URL(fileURLWithPath:"/usr/bin/openssl"); process.arguments=["genrsa","2048"]
+    process.standardOutput=output;process.standardError=FileHandle.nullDevice
+    try process.run()
+    let bytes=output.fileHandleForReading.readDataToEndOfFile();process.waitUntilExit()
+    try require(process.terminationStatus==0 && bytes.count <= 16*1024,"controlled key generation failed")
+    guard let pem=String(data:bytes,encoding:.utf8) else {throw Failure(message:"controlled key encoding failed")};return pem
+}
+func sourceWalkthrough(_ bundle: URL, _ directory: URL, _ target: SecKeychain) throws {
+    try launch(bundle,directory,target,sourcesCheck:true); sourceSequence=0
+    try activateSources(); try sourcePress("Kalshi credentials")
+    let keyA=try controlledPem(), keyB=try controlledPem()
+    try sourceFill("provider-key-id","controlled-A"); try sourceFill("provider-private-key",keyA)
+    try sourcePress("Save Kalshi credential"); try waitText("Credential save confirmed")
+    try sourceFill("provider-key-id","controlled-B"); try sourceFill("provider-private-key",keyB)
+    try sourcePress("Save Kalshi credential"); try waitText("already saved")
+    try sourceFill("provider-private-key",keyB); try sourcePress("Replace Kalshi credential"); try waitText("Credential replace confirmed")
+    try quit(); try launch(bundle,directory,target,sourcesCheck:true); sourceSequence=0; try activateSources(); try sourcePress("Kalshi credentials")
+    try sourcePress("Check credential status"); try waitText("Saved: controlled-B")
+    for (name,identity) in [("Kalshi","kalshi"),("BRTI via Kalshi","brti"),("Coinbase","coinbase"),("Kraken","kraken")] {try sourcePress("Connect " + name);try waitText("Connection requested for " + identity)}
+    try sourceFrame("coinbase",#"{"type":"last_match","product_id":"BTC-USD","trade_id":10,"price":"68000.12","time":"2026-11-16T00:00:00Z"}"#)
+    try waitText("68000.12")
+    try sourceFrame("kalshi",#"{"type":"subscribed","msg":{"sid":1,"channel":"orderbook_delta"}}"#)
+    try sourceFrame("kalshi",#"{"type":"orderbook_snapshot","sid":1,"seq":1,"msg":{"market_ticker":"KXBTC15M-0","yes_dollars_fp":[["0.36","2.00"]],"no_dollars_fp":[["0.64","3.00"]]}}"#)
+    try sourceFrame("kalshi",#"{"type":"subscribed","msg":{"sid":3,"channel":"cfbenchmarks_value"}}"#)
+    try sourceFrame("kalshi",#"{"type":"cfbenchmarks_value","sid":3,"seq":1,"msg":{"index_id":"BRTI","data":"{\"id\":\"BRTI\",\"time\":2000,\"value\":\"68000.12\"}"}}"#)
+    try sourceFrame("kraken",#"{"channel":"trade","type":"snapshot","data":[{"symbol":"BTC/USD","trade_id":1,"price":68000.12,"timestamp":"2026-11-16T00:00:00Z"}]}"#)
+    try sourcePress("Disconnect Kalshi");try waitText("kalshi disconnected")
+    try sourceFrame("coinbase","not json") // Ack means invalidity was published, never healthy data.
+    try waitText("Invalid source data")
+    try sourcePress("Remove Kalshi credential");try waitText("Credential remove confirmed")
+    try quit();print("PASS: isolated sources/native commands/credential lifecycle and observed exit")
 }
 func appNodes() -> [AXUIElement] { nodes(AXUIElementCreateApplication(child)) }
 func text(_ node: AXUIElement) -> String {
@@ -239,6 +314,14 @@ func recoverySelfTest() throws {
     let dummyBootstrap = bootstrap("controlled",1,2,providerCheck:false)
     let providerBootstrap = bootstrap("controlled",1,2,providerCheck:true)
     try require(dummyBootstrap["mode"] == nil && dummyBootstrap.count == 5 && providerBootstrap["mode"] as? String == "sources" && providerBootstrap.count == 6,"bootstrap mode shape changed")
+    try require(try !providerMode(["--sources","test.app"]),"sources mode unavailable")
+    let sourceProbe=try sourceEnvelope("kraken",#"{"price":68000.123456}"#,9007199254740993)
+    try require(sourceProbe["sequence"] as? String == "9007199254740993" && sourceProbe["kind"] as? String == "provider_frame","source sequence shape changed")
+    for (provider,payload,number) in [("brti","{}",UInt64(1)),("kalshi","{}",UInt64(0)),("kraken",String(repeating:"x",count:128*1024+1),UInt64(1))] {
+        do { _=try sourceEnvelope(provider,payload,number); throw Failure(message:"invalid source envelope accepted") }
+        catch let error as Failure {try require(error.message != "invalid source envelope accepted","invalid source envelope accepted")}
+    }
+    print("PASS: sources mode, decimal sequence, lexical payload and bounded envelope")
     var acknowledgments: [Int32] = [-1,-1]
     try require(socketpair(AF_UNIX,SOCK_STREAM,0,&acknowledgments) == 0,"acknowledgment self-test socket failed")
     socket = acknowledgments[0]
@@ -302,7 +385,7 @@ func recoverySelfTest() throws {
     try require(outputPipe == [-1,-1] && child == 0,"self-test noisy child not cleaned up")
     print("PASS: noisy child exited within deadline; all output captured and markers rejected")
 }
-func launch(_ bundle: URL, _ directory: URL, _ target: SecKeychain, isolatedSetup: Bool = true, providerCheck: Bool = false) throws {
+func launch(_ bundle: URL, _ directory: URL, _ target: SecKeychain, isolatedSetup: Bool = true, providerCheck: Bool = false, sourcesCheck: Bool = false) throws {
     let info = try PropertyListSerialization.propertyList(from: Data(contentsOf:bundle.appendingPathComponent("Contents/Info.plist")),format:nil) as! [String:Any]
     let executable = bundle.appendingPathComponent("Contents/MacOS/" + (info["CFBundleExecutable"] as! String)).path
     var pair: [Int32] = [-1,-1]; try require(socketpair(AF_UNIX,SOCK_STREAM,0,&pair) == 0,"socketpair failed")
@@ -320,6 +403,7 @@ func launch(_ bundle: URL, _ directory: URL, _ target: SecKeychain, isolatedSetu
     var environment = ProcessInfo.processInfo.environment
     if isolatedSetup { environment["METTEN_VERIFY_FD"] = "3" } else { environment.removeValue(forKey:"METTEN_VERIFY_FD") }
     if providerCheck { environment["METTEN_PROVIDER_CHECK"] = "1" } else { environment.removeValue(forKey:"METTEN_PROVIDER_CHECK") }
+    if sourcesCheck { environment["METTEN_SOURCES_CHECK"] = "1" } else { environment.removeValue(forKey:"METTEN_SOURCES_CHECK") }
     environment["METTEN_TEST_WORKSPACE"] = directory.appendingPathComponent("workspace").path
     let env = environment.map { strdup($0.key + "=" + $0.value) } + [nil]
     defer { args.forEach { free($0) }; env.forEach { free($0) } }
@@ -330,13 +414,14 @@ func launch(_ bundle: URL, _ directory: URL, _ target: SecKeychain, isolatedSetu
     session = UUID().uuidString.replacingOccurrences(of:"-",with:"").lowercased(); sequence = 0
     let targetPath = try path(target)
     let attrs = try fm.attributesOfItem(atPath:targetPath)
-    if isolatedSetup { try send(bootstrap(targetPath,attrs[.systemNumber]!,attrs[.systemFileNumber]!,providerCheck:providerCheck)) }
+    if isolatedSetup { try send(bootstrap(targetPath,attrs[.systemNumber]!,attrs[.systemFileNumber]!,providerCheck:providerCheck || sourcesCheck)) }
     if providerCheck {
         try providerAck()
         try require(try waitForChildExit(timeout:10),"packaged provider process did not exit")
         print("PASS: packaged native provider save/duplicate/replace/fixed-read/sign/remove and process exit")
         return
     }
+    if sourcesCheck { return }
     try waitText("Local credential readability unchecked.")
 }
 func scan(_ directory: URL) throws {
@@ -425,9 +510,11 @@ func waitAccessRefusal() throws {
     throw Failure(message:"actual prompt refusal did not produce a fixed access-refusal status")
 }
 func run() throws {
-    let providerCheck = try providerMode(Array(CommandLine.arguments.dropFirst()))
+    let arguments = Array(CommandLine.arguments.dropFirst())
+    let providerCheck = try providerMode(arguments)
+    let sourcesCheck = arguments.count == 2 && arguments[0] == "--sources"
     try require(providerCheck || AXIsProcessTrusted(),"BLOCKED: native runner requires Accessibility permission")
-    let bundle = URL(fileURLWithPath:CommandLine.arguments[providerCheck ? 2 : 1]).standardizedFileURL
+    let bundle = URL(fileURLWithPath:CommandLine.arguments[providerCheck || sourcesCheck ? 2 : 1]).standardizedFileURL
     let before = try metadata(); baselineMetadata = before
     var directory = URL(fileURLWithPath:NSTemporaryDirectory()).appendingPathComponent("metten-credential-" + UUID().uuidString).resolvingSymlinksInPath()
     try fm.createDirectory(at:directory,withIntermediateDirectories:false,attributes:[.posixPermissions:0o700]); ownedDirectory = directory
@@ -444,6 +531,12 @@ func run() throws {
         try launch(bundle,directory,target!,providerCheck:true)
         try scan(directory)
         try require(try metadata() == before,"isolation changed during provider check")
+        return
+    }
+    if sourcesCheck {
+        try sourceWalkthrough(bundle,directory,target!)
+        try scan(directory)
+        try require(try metadata() == before,"isolation changed during sources check")
         return
     }
     try launch(bundle,directory,target!)

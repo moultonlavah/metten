@@ -22,6 +22,11 @@ pub(super) struct ScheduleLoss {
     pub terminal: bool,
 }
 /// Runs only on the existing owned native worker. It owns no financial run.
+#[derive(Clone, Copy)]
+struct DesiredSources {
+    enabled: [bool; 4],
+    revocations: [u64; 4],
+}
 pub struct SourceWorker {
     pub(super) state: metten_engine::sources::SourceState,
     kalshi: kalshi::Kalshi,
@@ -47,6 +52,9 @@ pub struct SourceWorker {
     progress: Option<watch::Sender<transport::Progress>>,
     blocked: [bool; 6],
     index_requested: bool,
+    enabled: [bool; 4],
+    seen_revocations: [u64; 4],
+    sids: [Option<u32>; 6],
     #[cfg(test)]
     pub(super) lease: Option<u64>,
     _base_charge: Arc<tokio::sync::OwnedSemaphorePermit>,
@@ -59,17 +67,7 @@ impl SourceWorker {
         let base_charge = memory.reserve(64 * 1024)?;
         let _initial_view_charge = memory.reserve(256 * 1024)?;
         let view = state.snapshot(0).map_err(|_| Failure::InvalidRequest)?;
-        let mut requirements = Vec::new();
-        for b in &view.bindings {
-            if !requirements
-                .iter()
-                .any(|r: &metten_engine::strategy::SourceRequirement| {
-                    r.input_id == b.requirement.input_id
-                })
-            {
-                requirements.push(b.requirement.clone())
-            }
-        }
+        let requirements = state.requirements().to_vec();
         let tickers = view
             .markets
             .iter()
@@ -101,6 +99,9 @@ impl SourceWorker {
             progress: None,
             blocked: [false; 6],
             index_requested: false,
+            enabled: [true; 4],
+            seen_revocations: [0; 4],
+            sids: [None; 6],
             #[cfg(test)]
             lease: None,
         })
@@ -123,6 +124,8 @@ impl SourceWorker {
         Ok(SourceView {
             requirements: self.requirements.clone(),
             blocked: self.blocked,
+            enabled: self.enabled,
+            revocations: self.seen_revocations,
             details: self.details.clone(),
             market_details: self.market_details.clone(),
             schedule: self.schedule.clone(),
@@ -154,6 +157,9 @@ impl SourceWorker {
             return Err(Failure::Stopped);
         }
         if state != metten_engine::sources::Connection::Open {
+            for stream in provider_streams(provider) {
+                self.sids[*stream as usize] = None;
+            }
             revoke_gates(&self.gates, provider_streams(provider))?;
             if let Some((fence, _)) = &self.links[provider.index()] {
                 fence.revoke();
@@ -205,7 +211,14 @@ impl SourceWorker {
         self.at = at;
         let expired = Instant::now().saturating_duration_since(item.received_at) > MAX_INTAKE_AGE;
         let wire_stream = if item.provider == Provider::Kalshi && !expired {
-            match self.kalshi.stream(item.bytes.as_slice()) {
+            let disabled = std::array::from_fn(|i| {
+                !self.enabled[if i == metten_engine::sources::Stream::Brti as usize {
+                    1
+                } else {
+                    0
+                }]
+            });
+            match self.kalshi.stream(item.bytes.as_slice(), &disabled) {
                 Ok(stream) => stream,
                 Err(error) => {
                     item.fence.fail(error);
@@ -319,6 +332,8 @@ impl SourceWorker {
         let details = &mut self.details;
         let market_details = &mut self.market_details;
         let index_requested = &mut self.index_requested;
+        let sids = &mut self.sids;
+        let enabled = self.enabled;
         let blocked = &mut self.blocked;
         let schedule = self.schedule.clone();
         let mut emit = |event| {
@@ -441,7 +456,22 @@ impl SourceWorker {
                 return Ok(());
             }
             if let wire::Event::Acknowledged(stream, sid) = &event {
+                sids[*stream as usize] = Some(*sid);
                 if blocked[*stream as usize] {
+                    if !enabled[if *stream == metten_engine::sources::Stream::Brti {
+                        1
+                    } else {
+                        0
+                    }] && let Some(outbound) = &outbound
+                    {
+                        *command_id = command_id.checked_add(1).ok_or(Failure::Capacity)?;
+                        outbound
+                            .try_send(Control::KalshiUnsubscribe {
+                                id: *command_id,
+                                subscriptions: vec![*sid],
+                            })
+                            .map_err(|_| Failure::Capacity)?;
+                    }
                     return Ok(());
                 }
                 match stream {
@@ -525,6 +555,13 @@ impl SourceWorker {
                 Provider::Kraken => self.kraken.decode(item.bytes.as_slice(), &mut emit),
             }
         };
+        for index in 0..2 {
+            if !self.enabled[index] {
+                for &stream in logical_streams(index) {
+                    self.kalshi.retire(stream);
+                }
+            }
+        }
         if self.blocked[metten_engine::sources::Stream::Book as usize] {
             self.kalshi.discard_book();
         }
@@ -614,6 +651,8 @@ impl SourceWorker {
 pub struct SourceView {
     epoch_utc_ms: i64,
     blocked: [bool; 6],
+    enabled: [bool; 4],
+    revocations: [u64; 4],
     snapshot: metten_engine::sources::SourceSnapshot,
     details: [Option<wire::Details>; 6],
     market_details: BTreeMap<String, [Option<wire::Details>; 2]>,
@@ -624,6 +663,261 @@ pub struct SourceView {
     epochs: [u64; 6],
     gates: [Arc<AtomicU64>; 6],
     _charge: tokio::sync::OwnedSemaphorePermit,
+}
+pub fn source_name(source: metten_engine::strategy::Source) -> &'static str {
+    use metten_engine::strategy::Source::*;
+    match source {
+        Kalshi => "kalshi",
+        Brti => "brti",
+        Coinbase => "coinbase",
+        Kraken => "kraken",
+    }
+}
+fn logical_streams(index: usize) -> &'static [metten_engine::sources::Stream] {
+    use metten_engine::sources::Stream::*;
+    match index {
+        0 => &[Book, Trades, Metadata],
+        1 => &[Brti],
+        2 => &[Coinbase],
+        _ => &[Kraken],
+    }
+}
+impl SourceHandle {
+    pub fn disable(&self, index: usize) -> Result<(), Failure> {
+        if index >= 4 {
+            return Err(Failure::InvalidRequest);
+        }
+        revoke_gates(&self.gates, logical_streams(index))?;
+        let mut result = Ok(());
+        self.desired.send_modify(|set| {
+            set.enabled[index] = false;
+            if let Some(next) = set.revocations[index].checked_add(1) {
+                set.revocations[index] = next;
+            } else {
+                result = Err(Failure::Capacity);
+            }
+        });
+        result
+    }
+    pub fn intent_revision(&self, index: usize) -> u64 {
+        self.desired.borrow().revocations[index]
+    }
+    pub fn enable_if_current(&self, index: usize, expected: u64) -> Result<(), Failure> {
+        if index >= 4 {
+            return Err(Failure::InvalidRequest);
+        }
+        let mut current = false;
+        self.desired.send_modify(|set| {
+            if set.revocations[index] == expected {
+                set.enabled[index] = true;
+                current = true;
+            }
+        });
+        if !current {
+            return Err(Failure::Stopped);
+        }
+        self.wait_membership(index, true, expected)
+    }
+    pub fn enable(&self, index: usize, enabled: bool) -> Result<(), Failure> {
+        if index >= 4 {
+            return Err(Failure::InvalidRequest);
+        }
+        if enabled {
+            self.enable_if_current(index, self.intent_revision(index))
+        } else {
+            self.disable(index)?;
+            self.wait_membership(index, false, self.intent_revision(index))
+        }
+    }
+    fn wait_membership(&self, index: usize, enabled: bool, expected: u64) -> Result<(), Failure> {
+        let deadline = std::time::Instant::now() + Duration::from_secs(2);
+        loop {
+            if self.intent_revision(index) != expected {
+                return Err(Failure::Stopped);
+            }
+            if self.latest.borrow().as_ref().is_some_and(|view| {
+                view.enabled[index] == enabled && view.revocations[index] == expected
+            }) {
+                return Ok(());
+            }
+            if std::time::Instant::now() >= deadline {
+                return Err(Failure::Deadline);
+            }
+            std::thread::sleep(Duration::from_millis(5));
+        }
+    }
+    pub fn show_connection(
+        &self,
+        provider: Provider,
+        state: metten_engine::sources::Connection,
+    ) -> Result<(), Failure> {
+        let (reply, received) = tokio::sync::oneshot::channel();
+        self.command
+            .try_send(SourceCommand::Connection {
+                provider,
+                state,
+                reply,
+            })
+            .map_err(|_| Failure::Capacity)?;
+        tauri::async_runtime::block_on(async {
+            tokio::time::timeout(Duration::from_secs(2), received)
+                .await
+                .map_err(|_| Failure::Deadline)?
+                .map_err(|_| Failure::Stopped)?
+        })
+    }
+    pub fn prepare_fixture_markets(&self) -> Result<(), Failure> {
+        let (reply, received) = tokio::sync::oneshot::channel();
+        self.command
+            .try_send(SourceCommand::FixtureMarkets { reply })
+            .map_err(|_| Failure::Capacity)?;
+        tauri::async_runtime::block_on(async {
+            tokio::time::timeout(Duration::from_secs(2), received)
+                .await
+                .map_err(|_| Failure::Deadline)?
+                .map_err(|_| Failure::Stopped)?
+        })
+    }
+    pub fn dispatch_fixture(&self, provider: Provider, payload: &[u8]) -> Result<(), Failure> {
+        let fence = self.fixtures[provider.index()]
+            .borrow()
+            .clone()
+            .ok_or(Failure::Stopped)?;
+        if !fence.current(fence.token()) {
+            return Err(Failure::Stopped);
+        }
+        let view = self.latest.borrow().clone().ok_or(Failure::Stopped)?;
+        let snapshot = view.snapshot()?;
+        let tokens = SOURCE_STREAMS.map(|stream| {
+            snapshot
+                .streams
+                .iter()
+                .find(|(s, _, _)| *s == stream)
+                .unwrap()
+                .2
+        });
+        let (reply, received) = tokio::sync::oneshot::channel();
+        let mut item = Intake::new(provider, &fence, self.memory.copy(payload)?, Instant::now());
+        item.source_tokens = Some(tokens);
+        item.completion = Some(reply);
+        admit(&self.intake, &fence, item)?;
+        tauri::async_runtime::block_on(async {
+            tokio::time::timeout(Duration::from_secs(2), received)
+                .await
+                .map_err(|_| Failure::Deadline)?
+                .map_err(|_| Failure::Stopped)?
+        })
+    }
+    pub fn enabled(&self) -> [bool; 4] {
+        self.desired.borrow().enabled
+    }
+    pub fn memory(&self) -> &memory::Memory {
+        &self.memory
+    }
+    pub fn elapsed_ms(&self) -> u64 {
+        u64::try_from(self.epoch.elapsed().as_millis()).unwrap_or(u64::MAX)
+    }
+}
+impl SourceWorker {
+    fn observe_membership(&mut self, desired: DesiredSources, at: u64) -> Result<(), Failure> {
+        for i in 0..4 {
+            if self.seen_revocations[i] != desired.revocations[i] {
+                let mut stopped = self.enabled;
+                stopped[i] = false;
+                self.membership(stopped, at)?;
+                self.seen_revocations[i] = desired.revocations[i];
+            }
+        }
+        self.membership(desired.enabled, at)
+    }
+    pub(super) fn membership(&mut self, desired: [bool; 4], at: u64) -> Result<(), Failure> {
+        use metten_engine::sources::{Scope, Stream, Unavailable};
+        use metten_engine::strategy::Source;
+        for (index, enabled) in desired.into_iter().enumerate() {
+            if enabled == self.enabled[index] {
+                continue;
+            }
+            let streams = logical_streams(index);
+            let source = [
+                Source::Kalshi,
+                Source::Brti,
+                Source::Coinbase,
+                Source::Kraken,
+            ][index];
+            revoke_gates(&self.gates, streams)?;
+            self.state
+                .invalidate(Scope::Source(source), Unavailable::Disconnected, at, None)
+                .map_err(|_| Failure::Protocol)?;
+            self.enabled[index] = enabled;
+            let provider = match index {
+                0 | 1 => Provider::Kalshi,
+                2 => Provider::Coinbase,
+                _ => Provider::Kraken,
+            };
+            for &stream in streams {
+                self.blocked[stream as usize] = !enabled;
+                if let Some(progress) = &self.progress {
+                    progress.send_modify(|p| {
+                        p.tokens[stream as usize] = Some(self.state.token(stream));
+                        if !enabled {
+                            p.disable(stream);
+                        }
+                    });
+                }
+                if !self.links[provider.index()]
+                    .as_ref()
+                    .is_some_and(|(f, g)| f.current(*g))
+                {
+                    continue;
+                }
+                self.command_id = self.command_id.checked_add(1).ok_or(Failure::Capacity)?;
+                let command = if !enabled {
+                    self.sids[stream as usize]
+                        .take()
+                        .map(|sid| Control::KalshiUnsubscribe {
+                            id: self.command_id,
+                            subscriptions: vec![sid],
+                        })
+                } else {
+                    let channel = match stream {
+                        Stream::Book => Channel::Book,
+                        Stream::Trades => Channel::Trade,
+                        Stream::Brti => Channel::Brti,
+                        Stream::Metadata => Channel::Lifecycle,
+                        _ => continue,
+                    };
+                    if matches!(stream, Stream::Book | Stream::Trades) && self.tickers.is_empty() {
+                        continue;
+                    }
+                    Some(Control::KalshiSubscribe {
+                        id: self.command_id,
+                        channel,
+                        markets: if matches!(stream, Stream::Book | Stream::Trades) {
+                            self.tickers.clone()
+                        } else {
+                            vec![]
+                        },
+                    })
+                };
+                if let Some(command) = command {
+                    self.controls[provider.index()]
+                        .as_ref()
+                        .ok_or(Failure::Stopped)?
+                        .try_send(command)
+                        .map_err(|_| Failure::Capacity)?;
+                }
+            }
+            if !enabled && index < 2 {
+                for &stream in streams {
+                    self.kalshi.retire(stream);
+                }
+            }
+            if index == 1 {
+                self.index_requested = false;
+            }
+        }
+        Ok(())
+    }
 }
 fn provider_streams(provider: Provider) -> &'static [metten_engine::sources::Stream] {
     use metten_engine::sources::Stream;
@@ -673,6 +967,136 @@ impl SourceView {
         self.current(provider) && live != u64::MAX && live == self.epochs[i]
     }
     /// Recheck permissions at use, including a stop after this view was constructed.
+    pub fn wire_snapshot(&self, now_ms: u64) -> serde_json::Value {
+        use metten_engine::{
+            sources::*,
+            strategy::{BindingScope, RuleUnit},
+        };
+        use serde_json::json;
+        let sources: Vec<_> = self.snapshot.sources.iter().map(|(source, state)| {
+            let i = *source as usize;
+            json!({"source": source_name(*source), "enabled": self.enabled[i],
+                "connection": if !self.enabled[i] || (*state==Connection::Open && !self.current(match i {0|1=>super::Provider::Kalshi,2=>super::Provider::Coinbase,_=>super::Provider::Kraken})) { "disconnected" } else { match state {
+                    Connection::Disconnected => "disconnected", Connection::MissingConfiguration => "missing_credentials",
+                    Connection::Connecting => "connecting", Connection::Open => "open", Connection::AccessRefused => "access_refused" } }})
+        }).collect();
+        let bindings: Vec<_> = self.snapshot.bindings.iter().map(|b| {
+            let stream = match b.requirement.source { metten_engine::strategy::Source::Kalshi if b.requirement.instrument == "current_market" => Stream::Metadata,
+                metten_engine::strategy::Source::Kalshi if b.requirement.field == "last_trade" => Stream::Trades,
+                metten_engine::strategy::Source::Kalshi => Stream::Book, metten_engine::strategy::Source::Brti => Stream::Brti,
+                metten_engine::strategy::Source::Coinbase => Stream::Coinbase, _ => Stream::Kraken };
+            let permitted = self.enabled[b.requirement.source as usize] && self.stream_current(stream);
+            let (market, side) = match &b.binding.scope { BindingScope::Underlying => (None, None), BindingScope::Market { market_id } => (Some(market_id), None),
+                BindingScope::Contract { market_id, side, .. } => (Some(market_id), Some(match side { metten_engine::strategy::Side::Yes => "yes", _ => "no" })) };
+            json!({"id":b.binding.binding_id.to_string(), "source":source_name(b.requirement.source),
+                "field":b.requirement.field,"unit":match b.requirement.unit {RuleUnit::ContractCents=>"contract_cents",RuleUnit::UsdPerBtc=>"usd_per_btc",RuleUnit::Percent=>"percent"},
+                "market_id":market,"side":side,"value":b.value.map(|v|v.to_string()),"identity":b.provider_identity,
+                "provider_time_utc":b.provider_time_utc,"age_ms":b.age_ms.map(|age|age.saturating_add(now_ms.saturating_sub(self.snapshot.at_ms)).to_string()),
+                "generation":b.generation.to_string(),"usable":permitted && b.usable && now_ms < b.valid_until_ms,
+                "history_ready":permitted && b.history_ready && b.capabilities.history.is_none(),
+                "reason":if b.requirement.instrument=="current_market" {Some("unavailable_reference")} else if permitted { b.reason.map(Unavailable::code) } else { Some("disconnected") },
+                "capabilities":{"current":b.capabilities.current.map(Unavailable::code),"observations":b.capabilities.observations.map(Unavailable::code),"history":b.capabilities.history.map(Unavailable::code)}})
+        }).collect();
+        let markets:Vec<_> = self.snapshot.markets.iter().map(|m|json!({"market_id":m.descriptor.market_id,"contract_id":m.descriptor.contract_id,
+            "series_id":m.descriptor.series_id,"open_ms":m.descriptor.open_ms.to_string(),"close_ms":m.descriptor.close_ms.to_string(),
+            "verified":m.verified && self.stream_current(Stream::Metadata),"preparation":if !self.stream_current(Stream::Book) {"identified"} else {match m.preparation {Preparation::Unknown=>"unknown",Preparation::Identified=>"identified",Preparation::Collecting=>"collecting",Preparation::Ready=>"ready"}}})).collect();
+        json!({"kind":"snapshot","owner":self.snapshot.owner.to_string(),"revision":self.snapshot.revision.to_string(),
+            "observed_at_utc_ms":(i128::from(self.epoch_utc_ms)+i128::from(self.snapshot.at_ms)).to_string(),
+            "environment":"demo","current_market":self.snapshot.current_market,"markets":markets,"sources":sources,"bindings":bindings})
+    }
+    pub fn wire_details(&self, source: usize, now_ms: u64) -> Result<serde_json::Value, Failure> {
+        if source >= 4 {
+            return Err(Failure::InvalidRequest);
+        }
+        use metten_engine::sources::Stream;
+        use serde_json::json;
+        let streams = logical_streams(source);
+        let mut values = Vec::new();
+        for &stream in streams {
+            if !self.enabled[source] || self.blocked[stream as usize] {
+                continue;
+            }
+            let markets: Vec<_> = if matches!(stream, Stream::Book | Stream::Trades) {
+                self.snapshot
+                    .markets
+                    .iter()
+                    .map(|m| Some(m.descriptor.market_id.as_str()))
+                    .collect()
+            } else {
+                vec![None]
+            };
+            for market in markets {
+                if let Ok(Some(detail)) = self.details(stream, market) {
+                    let detail = match detail {
+                        wire::Details::Book {
+                            clock,
+                            sid,
+                            sequence,
+                            quantities,
+                        } => {
+                            json!({"kind":"book","clock":clock.map(|v|v.to_string()),"sid":sid.to_string(),"sequence":sequence.to_string(),"quantity_unit":"contracts","quantities":{"yes_bid":quantities[0].map(|q|q.to_string()),"no_bid":quantities[1].map(|q|q.to_string()),"yes_ask":quantities[2].map(|q|q.to_string()),"no_ask":quantities[3].map(|q|q.to_string())}})
+                        }
+                        wire::Details::Trade {
+                            quantity,
+                            direction,
+                            role,
+                            sequence,
+                            block,
+                        } => {
+                            json!({"kind":"trade","quantity_unit":if source==0 {"contracts"}else{"btc"},"quantity":quantity,"direction":direction,"role":role,"sequence":sequence.map(|v|v.to_string()),"block":block})
+                        }
+                        wire::Details::Brti {
+                            received_at,
+                            sending_ts_ms,
+                            trailing,
+                            final_minute,
+                        } => {
+                            let average = |a: &Option<wire::Average>| {
+                                a.as_ref().map(|a|json!({"value":a.value,"unit":"usd_per_btc","count":a.count.to_string(),"start":a.start.map(|v|v.to_string()),"end_exclusive":a.end_exclusive.map(|v|v.to_string()),"reference_usable":false}))
+                            };
+                            json!({"kind":"brti","received_at":received_at.map(|v|v.to_string()),"sending_ts_ms":sending_ts_ms.map(|v|v.to_string()),"trailing":average(trailing),"provisional_final_minute":average(final_minute)})
+                        }
+                    };
+                    let binding = self.snapshot.bindings.iter().find(|b| {
+                        b.requirement.source as usize == source
+                            && match &b.binding.scope {
+                                metten_engine::strategy::BindingScope::Underlying => {
+                                    market.is_none()
+                                }
+                                metten_engine::strategy::BindingScope::Contract {
+                                    market_id,
+                                    ..
+                                } => {
+                                    market == Some(market_id.as_str())
+                                        && (b.requirement.field == "last_trade")
+                                            == (stream == Stream::Trades)
+                                }
+                                _ => false,
+                            }
+                    });
+                    values.push(json!({"market_id":market,"detail":detail,"identity":binding.and_then(|b|b.provider_identity.as_ref()),"provider_time_utc":binding.and_then(|b|b.provider_time_utc.as_ref()),"receipt_age_ms":binding.and_then(|b|b.age_ms).map(|age|age.saturating_add(now_ms.saturating_sub(self.snapshot.at_ms)).to_string())}));
+                }
+            }
+        }
+        let projected = self.wire_snapshot(now_ms);
+        let name = source_name(
+            [
+                metten_engine::strategy::Source::Kalshi,
+                metten_engine::strategy::Source::Brti,
+                metten_engine::strategy::Source::Coinbase,
+                metten_engine::strategy::Source::Kraken,
+            ][source],
+        );
+        let bindings: Vec<_> = projected["bindings"]
+            .as_array()
+            .ok_or(Failure::Protocol)?
+            .iter()
+            .filter(|b| b["source"] == name)
+            .collect();
+        Ok(
+            json!({"kind":"details","source":name,"owner":projected["owner"],"revision":projected["revision"],"bindings":bindings,"values":values,"notice":"Received details only; capability, history and reference limitations remain."}),
+        )
+    }
     pub fn current(&self, provider: Provider) -> bool {
         if self.worker_signal.as_ref().is_some_and(|s| *s.borrow()) {
             return false;
@@ -922,6 +1346,14 @@ fn apply_source_event(
 
 /// Native-only handle. Step 5 may expose a finite projection, never this sender or fixtures.
 pub(super) enum SourceCommand {
+    Connection {
+        provider: Provider,
+        state: metten_engine::sources::Connection,
+        reply: tokio::sync::oneshot::Sender<Result<(), Failure>>,
+    },
+    FixtureMarkets {
+        reply: tokio::sync::oneshot::Sender<Result<(), Failure>>,
+    },
     Metadata {
         route: Route,
         bytes: memory::Bytes,
@@ -953,8 +1385,12 @@ impl Drop for ControlOwner {
         }
     }
 }
+#[derive(Clone)]
 pub struct SourceHandle {
     pub(super) command: mpsc::Sender<SourceCommand>,
+    desired: watch::Sender<DesiredSources>,
+    gates: [Arc<AtomicU64>; 6],
+    fixtures: [watch::Sender<Option<Fence>>; 3],
     epoch: Instant,
     memory: memory::Memory,
     pub(super) schedule: watch::Sender<Option<ScheduleLoss>>,
@@ -989,6 +1425,12 @@ impl Coordinator {
         let notices: [watch::Sender<Option<Notice>>; 3] =
             std::array::from_fn(|_| watch::channel(None).0);
         let notice_readers = notices.clone();
+        let (desired, membership) = watch::channel(DesiredSources {
+            enabled: source.enabled,
+            revocations: source.seen_revocations,
+        });
+        let gates = source.gates.clone();
+        let fixtures = std::array::from_fn(|_| watch::channel(None).0);
         let (command, mut command_rx) = mpsc::channel(1);
         let (tx, mut rx) = intake();
         let (publish, latest) = watch::channel(None);
@@ -1001,6 +1443,9 @@ impl Coordinator {
                     Ok(at) => at,
                     Err(_) => return,
                 };
+                if source.observe_membership(*membership.borrow(), at).is_err() {
+                    return;
+                }
                 if source.observe_schedule_loss(at).is_err() {
                     return;
                 }
@@ -1018,6 +1463,55 @@ impl Coordinator {
                 }
                 if let Ok(command) = command_rx.try_recv() {
                     match command {
+                        SourceCommand::Connection {
+                            provider,
+                            state,
+                            reply,
+                        } => {
+                            let stream = match provider {
+                                Provider::Kalshi => metten_engine::sources::Stream::Book,
+                                Provider::Coinbase => metten_engine::sources::Stream::Coinbase,
+                                _ => metten_engine::sources::Stream::Kraken,
+                            };
+                            let token = source.state.token(stream);
+                            let result = source.connection(provider, token, state, at).map(|_| ());
+                            let _ = reply.send(result);
+                        }
+                        SourceCommand::FixtureMarkets { reply } => {
+                            let result = (|| {
+                                let markets: Vec<_> = [0, 900000]
+                                    .into_iter()
+                                    .enumerate()
+                                    .map(|(i, open)| metten_engine::strategy::MarketDescriptor {
+                                        series_id: "KXBTC15M".into(),
+                                        market_id: format!("KXBTC15M-{i}"),
+                                        contract_id: format!("contract-{i}"),
+                                        open_ms: open,
+                                        close_ms: open + 900000,
+                                    })
+                                    .collect();
+                                let token =
+                                    source.state.token(metten_engine::sources::Stream::Metadata);
+                                source.install_markets(&markets, token, at, |_| Ok(()))?;
+                                for market in markets {
+                                    source
+                                        .state
+                                        .apply(source_envelope(
+                                            at,
+                                            metten_engine::sources::SourceEvent::Metadata {
+                                                token: source.state.token(
+                                                    metten_engine::sources::Stream::Metadata,
+                                                ),
+                                                market_id: market.market_id,
+                                                verified: true,
+                                            },
+                                        ))
+                                        .map_err(|_| Failure::Protocol)?;
+                                }
+                                Ok(())
+                            })();
+                            let _ = reply.send(result);
+                        }
                         SourceCommand::Markets {
                             discovered,
                             token,
@@ -1057,8 +1551,10 @@ impl Coordinator {
                         }
                     }
                 }
+                let mut dispatched = None;
                 match rx.try_recv() {
-                    Ok(item) => {
+                    Ok(mut item) => {
+                        dispatched = item.completion.take();
                         at = at.max(u64::try_from(epoch.elapsed().as_millis()).unwrap_or(u64::MAX));
                         if source.observe_schedule_loss(at).is_err()
                             || source.observe_stops(at).is_err()
@@ -1066,7 +1562,12 @@ impl Coordinator {
                         {
                             return;
                         }
-                        let _ = source.process(item, at, 0, |_| Ok(()));
+                        let result = source.process(item, at, 0, |_| Ok(()));
+                        if matches!(result, Err(Failure::Stopped | Failure::InvalidRequest))
+                            && let Some(reply) = dispatched.take()
+                        {
+                            let _ = reply.send(Err(Failure::Stopped));
+                        }
                     }
                     Err(mpsc::error::TryRecvError::Disconnected) => return,
                     Err(mpsc::error::TryRecvError::Empty) => (),
@@ -1077,6 +1578,9 @@ impl Coordinator {
                 match source.snapshot(at) {
                     Ok(view) => {
                         publish.send_replace(Some(Arc::new(view)));
+                        if let Some(reply) = dispatched {
+                            let _ = reply.send(Ok(()));
+                        }
                     }
                     Err(Failure::Stopped) if source.schedule.borrow().is_some() => (),
                     Err(_) => return,
@@ -1088,6 +1592,9 @@ impl Coordinator {
                 .stop(u64::try_from(epoch.elapsed().as_millis()).unwrap_or(u64::MAX));
         }));
         Ok(SourceHandle {
+            desired,
+            gates,
+            fixtures,
             intake: tx,
             latest,
             memory,
@@ -1431,6 +1938,43 @@ impl SourceWorker {
 
 impl Coordinator {
     /// Explicit native setup only; startup and screen refresh never call this.
+    fn start_fixture(&mut self, provider: Provider, handle: &SourceHandle) -> Result<(), Failure> {
+        let session = self.fence(provider).session()?;
+        let link = handle.fixtures[provider.index()].clone();
+        let notice = handle.notices[provider.index()].clone();
+        let mut latest = handle.latest.clone();
+        let mut stop = self.cancellation(provider);
+        let charge = handle.memory.reserve(4 * MAX_BYTES)?;
+        let slot = handle.controls[provider.index()].clone();
+        let receiver = slot
+            .lock()
+            .map_err(|_| Failure::Unavailable)?
+            .take()
+            .ok_or(Failure::StillStopping)?;
+        let mut controls = ControlOwner {
+            slot,
+            receiver: Some(receiver),
+        };
+        self.spawn(provider,async move {
+            let _session_lifetime=ProviderLifetime(session.clone());
+            let _charge=charge;
+            loop {
+                if *stop.borrow() {return}
+                let snapshot=latest.borrow().clone();
+                if let Some(view)=snapshot
+                    && let Ok(snapshot)=view.snapshot() {
+                        let stream=match provider {Provider::Kalshi=>metten_engine::sources::Stream::Book,Provider::Coinbase=>metten_engine::sources::Stream::Coinbase,_=>metten_engine::sources::Stream::Kraken};
+                        let token=snapshot.streams.iter().find(|(s,_,_)|*s==stream).unwrap().2;
+                        notice.send_replace(Some((token,metten_engine::sources::Connection::Open,Some(session.clone()))));
+                        link.send_replace(Some(session.clone()));
+                        break;
+                }
+                tokio::select! { _=stop.changed()=>return, _=latest.changed()=>() }
+            }
+            loop {tokio::select!{biased; _=stop.changed()=>break, command=controls.receiver.as_mut().unwrap().recv()=>{if command.is_none(){break}}}}
+            link.send_replace(None);
+        })
+    }
     pub fn start_provider(
         &mut self,
         provider: Provider,
@@ -1438,6 +1982,9 @@ impl Coordinator {
         handle: &mut SourceHandle,
         credential: Option<(String, signing::Key)>,
     ) -> Result<(), Failure> {
+        if transport.is_isolated() {
+            return self.start_fixture(provider, handle);
+        }
         if !handle.memory.same_owner(transport.memory()) {
             return Err(Failure::InvalidRequest);
         }
@@ -1504,7 +2051,10 @@ impl Coordinator {
                             metten_engine::sources::Stream::Kraken
                         }
                     };
-                    if !view.blocked[stream as usize] && !streams.contains(&stream) {
+                    if view.enabled[requirement.source as usize]
+                        && !view.blocked[stream as usize]
+                        && !streams.contains(&stream)
+                    {
                         streams.push(stream)
                     }
                 }
@@ -1670,16 +2220,7 @@ impl Coordinator {
                     Some(watch::channel(transport::Progress::new()).0),
                 );
                 let metadata = async {
-                    if provider == Provider::Kalshi
-                        && streams.iter().any(|s| {
-                            matches!(
-                                s,
-                                metten_engine::sources::Stream::Book
-                                    | metten_engine::sources::Stream::Trades
-                                    | metten_engine::sources::Stream::Metadata
-                            )
-                        })
-                    {
+                    if provider == Provider::Kalshi {
                         run_metadata(
                             &transport,
                             latest.clone(),
@@ -1718,6 +2259,14 @@ impl Coordinator {
 }
 
 impl SourceWorker {
+    pub fn prepare_display(memory: memory::Memory) -> Result<Self, Failure> {
+        let mut source = Self::new(
+            metten_engine::sources::SourceState::display().map_err(|_| Failure::InvalidRequest)?,
+            memory,
+        )?;
+        source.enabled = [false; 4];
+        Ok(source)
+    }
     pub fn prepare(
         strategy: &metten_engine::strategy::ValidatedStrategy,
         markets: &[metten_engine::strategy::MarketDescriptor],
@@ -1804,7 +2353,7 @@ impl SourceWorker {
 
 async fn run_metadata(
     transport: &transport::Transport,
-    latest: watch::Receiver<Option<Arc<SourceView>>>,
+    mut latest: watch::Receiver<Option<Arc<SourceView>>>,
     command: mpsc::Sender<SourceCommand>,
     fence: Fence,
     mut stop: watch::Receiver<bool>,
@@ -1830,6 +2379,13 @@ async fn run_metadata(
         let wall = now.checked_sub(previous.1).ok_or(Failure::Unavailable)?;
         let discontinuity = clock_discontinuity(elapsed, wall, true);
         previous = (instant, now);
+        if latest.borrow().as_ref().is_none_or(|v| !v.enabled[0]) {
+            bounded(&mut stop, Instant::now() + Duration::from_secs(60), async {
+                latest.changed().await.map_err(|_| Failure::Stopped)
+            })
+            .await?;
+            continue;
+        }
         let view = latest.borrow().clone();
         if let Some(view) = view {
             if discontinuity {
