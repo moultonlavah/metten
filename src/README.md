@@ -56,7 +56,9 @@ identity/receipt age, current/next preparation and unsupported history/reference
 facts. Explicit refusal differs from silence/awaiting data. Kalshi/BRTI share
 credential identity; no spot substitution exists. `sourcePresentation` and
 `sourceFailure` are pure finite presentation helpers. Dynamic text is literal.
-Provider PEM input is obscured and clears synchronously before submission,
+Failure reasons render even when no price has arrived; an explicit invalid-data
+reason is not presented as ordinary waiting. Provider PEM input is obscured and
+clears synchronously before submission,
 including Busy/error paths. It is never repopulated or persisted by the frontend.
 Actual OS protection/native IPC and packaged GUI acceptance require separate
 proof; VM checks and headless rendering do not supply it.

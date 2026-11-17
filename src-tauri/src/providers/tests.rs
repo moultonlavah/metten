@@ -3102,6 +3102,84 @@ async fn fixture_dispatch_completes_only_after_real_decode_and_publication() {
 }
 
 #[test]
+fn source_failure_reason_survives_disconnect_publication_without_reviving_old_views() {
+    use metten_engine::sources::{Connection, Stream};
+    for good_first in [false, true] {
+        let memory = memory::Memory::default();
+        let mut worker = SourceWorker::prepare_display(memory).unwrap();
+        worker.membership([false, false, true, true], 0).unwrap();
+        let fence = Fence::new();
+        worker
+            .connection(
+                Provider::Coinbase,
+                worker.state.token(Stream::Coinbase),
+                Connection::Open,
+                0,
+            )
+            .unwrap();
+        if good_first {
+            feed_source(&mut worker, &fence, Provider::Coinbase, br#"{"type":"last_match","product_id":"BTC-USD","trade_id":10,"price":"68000.12","time":"2026-11-16T00:00:00Z"}"#, 0, None).unwrap();
+        }
+        let before = worker.snapshot(0).unwrap();
+        assert_eq!(
+            feed_source(
+                &mut worker,
+                &fence,
+                Provider::Coinbase,
+                b"not json",
+                1,
+                None
+            ),
+            Err(Failure::Protocol)
+        );
+        let published = worker.snapshot(1).unwrap().wire_snapshot(1);
+        assert_eq!(published["bindings"][1]["reason"], "invalid_value");
+        assert_eq!(published["bindings"][1]["usable"], false);
+        assert_eq!(
+            before.wire_snapshot(1)["bindings"][1]["reason"],
+            "disconnected"
+        );
+        worker.observe_stops(2).unwrap();
+        let after = worker.snapshot(2).unwrap();
+        let later = after.wire_snapshot(2);
+        assert_eq!(later["bindings"][1]["reason"], "invalid_value");
+        assert_eq!(later["bindings"][1]["value"].is_null(), !good_first);
+        assert_eq!(later["bindings"][1]["usable"], false);
+        assert!(after.stream_current(Stream::Kraken));
+        worker.membership([false, false, false, true], 3).unwrap();
+        assert_eq!(
+            after.wire_snapshot(3)["bindings"][1]["reason"],
+            "disconnected"
+        );
+        assert_eq!(
+            worker.snapshot(3).unwrap().wire_snapshot(3)["bindings"][1]["reason"],
+            "disconnected"
+        );
+        worker.membership([false, false, true, true], 4).unwrap();
+        worker
+            .connection(
+                Provider::Coinbase,
+                worker.state.token(Stream::Coinbase),
+                Connection::Open,
+                4,
+            )
+            .unwrap();
+        assert_ne!(
+            worker.snapshot(4).unwrap().wire_snapshot(4)["bindings"][1]["reason"],
+            "invalid_value"
+        );
+        let fresh = Fence::new();
+        feed_source(&mut worker, &fresh, Provider::Coinbase, br#"{"type":"last_match","product_id":"BTC-USD","trade_id":11,"price":"68000.12","time":"2026-11-16T00:00:01Z"}"#, 4, None).unwrap();
+        let current = worker.snapshot(4).unwrap();
+        fresh.revoke();
+        assert_eq!(
+            current.wire_snapshot(4)["bindings"][1]["reason"],
+            "disconnected"
+        );
+    }
+}
+
+#[test]
 fn logical_kalshi_retirement_preserves_brti_and_releases_old_subscription_ids() {
     use metten_engine::sources::{Connection, Stream};
     let memory = memory::Memory::default();

@@ -43,6 +43,9 @@ class CredentialRunnerRecovery(unittest.TestCase):
             self.assertIn("noisy child exited within deadline; all output captured and markers rejected", result)
             self.assertIn("provider mode, bootstrap shape, rejected/late/closed acknowledgments", result)
             self.assertIn("sources mode, decimal sequence, lexical payload and bounded envelope", result)
+            self.assertIn("source assertions reject wrong value, identity and connection state", result)
+            self.assertIn("source assertions reject suffix collisions and extra value text", result)
+            self.assertIn("observed WebKit flattened text preserves exact price, unit and identity checks", result)
             print(result, end="")
 
 

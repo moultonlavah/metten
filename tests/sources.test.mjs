@@ -79,3 +79,13 @@ test('disconnect remains available during pending Connect and late action succes
   connect.resolve({ kind: 'action', source: 'kalshi', accepted: true }); await setImmediate();
   assert.equal(h.element('source-status').textContent, 'kalshi disconnected.');
 });
+
+test('invalid first data is visible without inventing a received value', () => {
+  const s = snapshot(); s.sources[2] = { source: 'coinbase', enabled: true, connection: 'disconnected' };
+  s.bindings = [{ source: 'coinbase', field: 'last_trade', value: null, unit: 'usd_per_btc', market_id: null, side: null, identity: null, age_ms: null, usable: false, history_ready: false, reason: 'invalid_value', capabilities: { current: 'unknown_freshness' } }];
+  const text = sourcePresentation(s, 'coinbase');
+  assert.match(text, /Invalid source data/);
+  assert.doesNotMatch(text, /Awaiting verified data|USD\/BTC|Last value retained/);
+  s.bindings[0].value = '68000.12';
+  assert.match(sourcePresentation(s, 'coinbase'), /Invalid source data/);
+});

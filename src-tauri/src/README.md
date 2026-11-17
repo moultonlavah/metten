@@ -359,8 +359,15 @@ without resetting the other source. A local two-second membership wait confirms
 the worker observed the desired set before connection start; it grants no price
 lease. `SourceView::wire_snapshot/wire_details` recheck permissions, preserve exact
 units/identity/receipt age and distinguish received values from usable inputs.
-Snapshots/details/inspection make zero provider requests. Diagnostics remain
-bounded in memory; no source preferences or feed history are stored durably.
+Snapshots/details/inspection make zero provider requests. Failure diagnostics
+retain at most one failed connection fence per provider, sharing its existing
+cause after active-link cleanup. Views copy only the finite failure category;
+current stream epochs, worker/schedule fences and logical membership still fence
+that diagnosis independently of usable-data permission. Explicit disconnect
+supersedes the diagnosis and a fresh connection clears the failed fence. This
+preserves invalid-first and good-then-invalid explanations across later worker
+publications without restoring strategy usability. Diagnostics remain bounded in
+memory; no source preferences or feed history are stored durably.
 
 `credential.rs:read_bootstrap` is the shared descriptor-3 bootstrap reader for
 mutually exclusive dummy, early provider-check and source-walkthrough launches.

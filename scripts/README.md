@@ -75,3 +75,24 @@ marker scans, unchanged global Keychain metadata and owned-only cleanup. If
 WebKit controls are inaccessible, record that concrete GUI blocker; never claim
 native-only or process-only checks establish the walkthrough. Do not rerun an
 unchanged known-blocked dummy GUI route merely to repeat it.
+
+The Sources adapter expands a uniquely titled owned disclosure using its supported
+focus relationship and an exact-child Space event, then observes AXExpanded.
+WebKit on the tested host advertises no Press action for these disclosures and
+non-settable AXValue/AXExpanded; calls can return success without a state change.
+Inputs use focused exact-child Unicode key events, never clipboard or coordinates,
+and require exact in-memory readback without printing the material. Source rows
+are selected by their own DOM identifier and checked for distinct values, units
+and identities. A fresh BRTI tick after scoped Kalshi disconnect checks retained
+shared ownership. Save/duplicate/replace require an empty actual secret field
+before waiting for credential completion; this is prompt packaged observation,
+while the frontend test separately establishes synchronous clearing semantics.
+Process-only assertion checks do not establish real WebKit access.
+
+A directly spawned app is activated once before disclosure discovery, with a
+bounded 20-second readiness wait; its window may otherwise remain absent. The
+tested WebKit exposes visual source-row line breaks as spaces in AXStaticText.
+Row assertions therefore normalize whitespace and match complete token sequences,
+retaining exact price/unit/identity boundaries rather than relying on visual
+lines or unrestricted substrings. The process regression includes the captured
+controlled-row shape and rejects price, precision, unit and identity collisions.

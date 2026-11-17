@@ -31,14 +31,14 @@ export function sourcePresentation(snapshot, name) {
   const bindings = snapshot.bindings.filter(b => b.source === name);
   const primary = bindings.filter(b => name !== 'kalshi' || (b.field === 'buyable_ask' && (!snapshot.current_market || b.market_id === snapshot.current_market)));
   const received = primary.filter(b => b.value !== null);
-  if (!received.length && state?.enabled) lines.push('Awaiting verified data.');
   for (const b of received) {
     const price = b.unit === 'contract_cents' ? `${b.value}¢` : `${b.value} USD/BTC`;
     lines.push(`${b.side ? b.side.toUpperCase() + ' ask · ' : ''}${price}`);
     lines.push(`${b.market_id ?? b.identity ?? name} · receipt age ${b.age_ms === null ? 'unknown' : b.age_ms + ' ms'}`);
   }
-  const reasons = { unknown_freshness: 'Freshness has not been verified.', gap: 'Data gap — rebuilding.', disconnected: 'Last value retained; source disconnected.', invalid_value: 'Invalid source data.', inconsistent_evidence: 'Conflicting source data.', over_age: 'Intake exceeded its age limit.', overflow: 'Intake capacity exceeded.', access_refused: 'Access explicitly refused.', awaiting_data: 'Awaiting verified data.' };
-  const unavailable = [...new Set(received.filter(b => !b.usable).map(b => b.reason ?? b.capabilities.current ?? 'awaiting_data'))];
+  const reasons = { unknown_freshness: 'Freshness has not been verified.', gap: 'Data gap — rebuilding.', disconnected: received.length ? 'Last value retained; source disconnected.' : 'Source disconnected.', invalid_value: 'Invalid source data.', inconsistent_evidence: 'Conflicting source data.', over_age: 'Intake exceeded its age limit.', overflow: 'Intake capacity exceeded.', access_refused: 'Access explicitly refused.', awaiting_data: 'Awaiting verified data.' };
+  const unavailable = [...new Set(primary.filter(b => !b.usable).map(b => b.reason ?? b.capabilities.current ?? 'awaiting_data'))];
+  if (!received.length && state?.enabled && !unavailable.length) unavailable.push('awaiting_data');
   for (const reason of unavailable) lines.push(Object.hasOwn(reasons, reason) ? reasons[reason] : 'This input is unavailable for strategy use.');
   if (received.some(b => !b.history_ready)) lines.push('Complete history is unverified.');
   return lines.join('\n');

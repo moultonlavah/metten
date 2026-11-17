@@ -53,6 +53,7 @@ pub struct SourceWorker {
     blocked: [bool; 6],
     index_requested: bool,
     enabled: [bool; 4],
+    failed_links: [Option<Fence>; 3],
     seen_revocations: [u64; 4],
     sids: [Option<u32>; 6],
     #[cfg(test)]
@@ -91,6 +92,7 @@ impl SourceWorker {
             epoch: Instant::now(),
             epoch_utc_ms: utc_now_ms()?,
             links: std::array::from_fn(|_| None),
+            failed_links: std::array::from_fn(|_| None),
             controls: std::array::from_fn(|_| None),
             command_id: 100,
             gates: std::array::from_fn(|_| Arc::new(AtomicU64::new(1))),
@@ -125,6 +127,13 @@ impl SourceWorker {
             requirements: self.requirements.clone(),
             blocked: self.blocked,
             enabled: self.enabled,
+            failures: std::array::from_fn(|i| {
+                self.links[i]
+                    .as_ref()
+                    .map(|(f, _)| f)
+                    .or(self.failed_links[i].as_ref())
+                    .and_then(|f| f.cause.lock().ok().and_then(|cause| *cause))
+            }),
             revocations: self.seen_revocations,
             details: self.details.clone(),
             market_details: self.market_details.clone(),
@@ -156,7 +165,14 @@ impl SourceWorker {
         if token != self.state.token(stream) {
             return Err(Failure::Stopped);
         }
-        if state != metten_engine::sources::Connection::Open {
+        if state == metten_engine::sources::Connection::Open {
+            self.failed_links[provider.index()] = None;
+        } else {
+            // Keep the existing fence's cause after active-link cleanup, not a second mutable reason.
+            self.failed_links[provider.index()] = self.links[provider.index()]
+                .as_ref()
+                .filter(|(f, _)| f.cause.lock().is_ok_and(|cause| cause.is_some()))
+                .map(|(f, _)| f.clone());
             for stream in provider_streams(provider) {
                 self.sids[*stream as usize] = None;
             }
@@ -652,6 +668,7 @@ pub struct SourceView {
     epoch_utc_ms: i64,
     blocked: [bool; 6],
     enabled: [bool; 4],
+    failures: [Option<Failure>; 3],
     revocations: [u64; 4],
     snapshot: metten_engine::sources::SourceSnapshot,
     details: [Option<wire::Details>; 6],
@@ -953,18 +970,24 @@ impl SourceView {
             *pending = Some(loss);
         });
     }
-    pub fn stream_current(&self, stream: metten_engine::sources::Stream) -> bool {
+    fn stream_epoch_current(&self, stream: metten_engine::sources::Stream) -> bool {
         if MARKET_STREAMS.contains(&stream) && self.schedule.borrow().is_some() {
             return false;
         }
+        if self.worker_signal.as_ref().is_some_and(|s| *s.borrow()) {
+            return false;
+        }
         let i = stream as usize;
+        let live = self.gates[i].load(Ordering::SeqCst);
+        live != u64::MAX && live == self.epochs[i]
+    }
+    pub fn stream_current(&self, stream: metten_engine::sources::Stream) -> bool {
         let provider = match stream {
             metten_engine::sources::Stream::Coinbase => Provider::Coinbase,
             metten_engine::sources::Stream::Kraken => Provider::Kraken,
             _ => Provider::Kalshi,
         };
-        let live = self.gates[i].load(Ordering::SeqCst);
-        self.current(provider) && live != u64::MAX && live == self.epochs[i]
+        self.current(provider) && self.stream_epoch_current(stream)
     }
     /// Recheck permissions at use, including a stop after this view was constructed.
     pub fn wire_snapshot(&self, now_ms: u64) -> serde_json::Value {
@@ -985,7 +1008,17 @@ impl SourceView {
                 metten_engine::strategy::Source::Kalshi if b.requirement.field == "last_trade" => Stream::Trades,
                 metten_engine::strategy::Source::Kalshi => Stream::Book, metten_engine::strategy::Source::Brti => Stream::Brti,
                 metten_engine::strategy::Source::Coinbase => Stream::Coinbase, _ => Stream::Kraken };
-            let permitted = self.enabled[b.requirement.source as usize] && self.stream_current(stream);
+            let enabled = self.enabled[b.requirement.source as usize];
+            let permitted = enabled && self.stream_current(stream);
+            let provider = match b.requirement.source as usize {0|1=>super::Provider::Kalshi,2=>super::Provider::Coinbase,_=>super::Provider::Kraken};
+            let failure_reason = self.failures[provider.index()].map(|failure| match failure {
+                Failure::Protocol => Unavailable::InvalidValue,
+                Failure::Capacity => Unavailable::Overflow,
+                Failure::Deadline => Unavailable::OverAge,
+                Failure::Transport => Unavailable::Gap,
+                Failure::Denied => Unavailable::Access,
+                _ => Unavailable::Disconnected,
+            });
             let (market, side) = match &b.binding.scope { BindingScope::Underlying => (None, None), BindingScope::Market { market_id } => (Some(market_id), None),
                 BindingScope::Contract { market_id, side, .. } => (Some(market_id), Some(match side { metten_engine::strategy::Side::Yes => "yes", _ => "no" })) };
             json!({"id":b.binding.binding_id.to_string(), "source":source_name(b.requirement.source),
@@ -994,7 +1027,7 @@ impl SourceView {
                 "provider_time_utc":b.provider_time_utc,"age_ms":b.age_ms.map(|age|age.saturating_add(now_ms.saturating_sub(self.snapshot.at_ms)).to_string()),
                 "generation":b.generation.to_string(),"usable":permitted && b.usable && now_ms < b.valid_until_ms,
                 "history_ready":permitted && b.history_ready && b.capabilities.history.is_none(),
-                "reason":if b.requirement.instrument=="current_market" {Some("unavailable_reference")} else if permitted { b.reason.map(Unavailable::code) } else { Some("disconnected") },
+                "reason":if b.requirement.instrument=="current_market" {Some("unavailable_reference")} else if enabled && self.stream_epoch_current(stream) && failure_reason.is_some() { failure_reason.map(Unavailable::code) } else if permitted { b.reason.map(Unavailable::code) } else { Some("disconnected") },
                 "capabilities":{"current":b.capabilities.current.map(Unavailable::code),"observations":b.capabilities.observations.map(Unavailable::code),"history":b.capabilities.history.map(Unavailable::code)}})
         }).collect();
         let markets:Vec<_> = self.snapshot.markets.iter().map(|m|json!({"market_id":m.descriptor.market_id,"contract_id":m.descriptor.contract_id,

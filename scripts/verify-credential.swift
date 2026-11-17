@@ -104,29 +104,113 @@ func sourceFrame(_ provider: String, _ payload: String) throws {
     try send(sourceEnvelope(provider,payload,sourceSequence))
     try providerAck(timeout:3)
 }
-func activateSources() throws {
-    let deadline=Date().addingTimeInterval(4)
+func sourceNode(_ identifier: String, timeout: TimeInterval = 4) throws -> AXUIElement {
+    let deadline=Date().addingTimeInterval(timeout)
     while Date()<deadline {
-        let matches=appNodes().filter {text($0).trimmingCharacters(in:.whitespaces)=="Connections and received data"}
-        if appNodes().contains(where:{(attribute($0,kAXIdentifierAttribute) as? String)=="source-coinbase-connect" || (attribute($0,"AXDOMIdentifier") as? String)=="source-coinbase-connect"}) {return}
-        if matches.count==1 && AXUIElementPerformAction(matches[0],kAXPressAction as CFString) == .success {return}
+        let matches=appNodes().filter {(attribute($0,kAXIdentifierAttribute) as? String)==identifier || (attribute($0,"AXDOMIdentifier") as? String)==identifier}
+        if matches.count==1 { return matches[0] }
         usleep(50_000)
     }
-    throw Failure(message:"BLOCKED: owned Sources controls are not accessible through WebKit")
+    throw Failure(message:"BLOCKED: owned Sources element unavailable: " + identifier)
+}
+func sourceFocus(_ node: AXUIElement) throws {
+    var settable:DarwinBoolean=false
+    try require(AXUIElementIsAttributeSettable(node,kAXFocusedAttribute as CFString,&settable) == .success && settable.boolValue,"BLOCKED: owned control cannot receive focus")
+    try require(NSRunningApplication(processIdentifier:child)?.activate() == true,"BLOCKED: owned app activation failed")
+    _ = AXUIElementPerformAction(node,"AXScrollToVisible" as CFString)
+    try require(AXUIElementSetAttributeValue(node,kAXFocusedAttribute as CFString,kCFBooleanTrue) == .success && (attribute(node,kAXFocusedAttribute) as? Bool)==true,"BLOCKED: owned control focus unconfirmed")
+}
+func sourceExpand(_ title: String) throws {
+    let deadline=Date().addingTimeInterval(20)
+    var requested=false
+    var activated=false
+    while Date()<deadline {
+        // A directly spawned Mac app may expose no window until its first activation.
+        if !activated, let app=NSRunningApplication(processIdentifier:child), app.isFinishedLaunching {
+            try require(app.activate(),"BLOCKED: owned app activation failed")
+            activated=true
+        }
+        let matches=appNodes().filter {(attribute($0,kAXRoleAttribute) as? String)=="AXDisclosureTriangle" && (attribute($0,kAXTitleAttribute) as? String)==title}
+        if matches.count==1, let expanded=attribute(matches[0],"AXExpanded") as? Bool {
+            if expanded { return }
+            if !requested {
+                try sourceFocus(matches[0])
+                guard let down=CGEvent(keyboardEventSource:nil,virtualKey:49,keyDown:true), let up=CGEvent(keyboardEventSource:nil,virtualKey:49,keyDown:false) else {throw Failure(message:"owned disclosure key event unavailable")}
+                down.postToPid(child); up.postToPid(child); requested=true
+            }
+        }
+        usleep(50_000)
+    }
+    throw Failure(message:"BLOCKED: owned disclosure did not expand: " + title)
+}
+func activateSources() throws {
+    try sourceExpand("Connections and received data")
+    _ = try sourceNode("source-coinbase-connect")
 }
 func sourceFill(_ identifier: String, _ value: String) throws {
-    let matches=appNodes().filter {(attribute($0,kAXIdentifierAttribute) as? String)==identifier || (attribute($0,"AXDOMIdentifier") as? String)==identifier}
-    try require(matches.count==1,"BLOCKED: owned Sources input unavailable: " + identifier)
-    try require(AXUIElementSetAttributeValue(matches[0],kAXValueAttribute as CFString,value as CFString) == .success,"Sources input entry failed")
+    let field = try sourceNode(identifier)
+    let role=attribute(field,kAXRoleAttribute) as? String
+    try require(role=="AXTextField" || role=="AXTextArea","owned Sources input role changed")
+    // WebKit returns success for a non-settable AXValue without changing the input.
+    try sourceFocus(field)
+    guard let select=CGEvent(keyboardEventSource:nil,virtualKey:0,keyDown:true), let release=CGEvent(keyboardEventSource:nil,virtualKey:0,keyDown:false) else {throw Failure(message:"owned input selection unavailable")}
+    select.flags = .maskCommand; release.flags = .maskCommand
+    select.postToPid(child); release.postToPid(child)
+    for unit in value.utf16 {
+        let code:CGKeyCode = unit == 10 ? 36 : 0
+        guard let down=CGEvent(keyboardEventSource:nil,virtualKey:code,keyDown:true), let up=CGEvent(keyboardEventSource:nil,virtualKey:code,keyDown:false) else {throw Failure(message:"owned input text event unavailable")}
+        if unit != 10 {
+            var character=unit
+            withUnsafePointer(to:&character) { down.keyboardSetUnicodeString(stringLength:1,unicodeString:$0) }
+        }
+        down.postToPid(child); up.postToPid(child)
+        usleep(2_000)
+    }
+    let deadline=Date().addingTimeInterval(4)
+    while Date()<deadline {
+        if (attribute(field,kAXValueAttribute) as? String)==value { return }
+        usleep(10_000)
+    }
+    throw Failure(message:"Sources input entry readback failed: " + identifier)
 }
 func sourcePress(_ title: String) throws {
     let deadline=Date().addingTimeInterval(4)
     while Date()<deadline {
-        let matches=appNodes().filter {node in [kAXTitleAttribute,kAXDescriptionAttribute].contains { (attribute(node,$0) as? String)==title }}
-        if matches.count==1 && AXUIElementPerformAction(matches[0],kAXPressAction as CFString) == .success {return}
+        let matches=appNodes().filter {node in (attribute(node,kAXRoleAttribute) as? String)==kAXButtonRole && [kAXTitleAttribute,kAXDescriptionAttribute].contains { (attribute(node,$0) as? String)==title }}
+        if matches.count==1 && (attribute(matches[0],kAXEnabledAttribute) as? Bool)==true {
+            var actions:CFArray?; AXUIElementCopyActionNames(matches[0],&actions)
+            if ((actions as? [String]) ?? []).contains(kAXPressAction) && AXUIElementPerformAction(matches[0],kAXPressAction as CFString) == .success {return}
+        }
         usleep(50_000)
     }
     throw Failure(message:"BLOCKED: owned Sources control unavailable: " + title)
+}
+func sourceFactsMatch(_ observed: String, _ required: [String]) -> Bool {
+    // WebKit flattens visual line breaks; match complete whitespace-delimited tokens.
+    let text=" " + observed.split(whereSeparator:{ $0.isWhitespace }).joined(separator:" ") + " "
+    return required.allSatisfy { fact in
+        let expected=fact.split(whereSeparator:{ $0.isWhitespace }).joined(separator:" ")
+        return !expected.isEmpty && text.contains(" " + expected + " ")
+    }
+}
+func sourceExpect(_ identifier: String, _ required: [String]) throws {
+    let node=try sourceNode(identifier)
+    let deadline=Date().addingTimeInterval(8)
+    while Date()<deadline {
+        let observed=nodes(node).map {text($0)}.joined(separator:"\n")
+        if sourceFactsMatch(observed,required) {print("PASS: owned " + identifier + " expected source facts");return}
+        usleep(50_000)
+    }
+    throw Failure(message:"owned Sources facts not observed: " + identifier)
+}
+func sourceClearCheck() throws {
+    let field=try sourceNode("provider-private-key")
+    let deadline=Date().addingTimeInterval(1)
+    while Date()<deadline {
+        if let value=attribute(field,kAXValueAttribute) as? String, value.isEmpty {print("PASS: packaged secret field cleared before waiting for credential result");return}
+        usleep(10_000)
+    }
+    throw Failure(message:"packaged secret field did not clear promptly")
 }
 func controlledPem() throws -> String {
     let process=Process(), output=Pipe()
@@ -139,27 +223,35 @@ func controlledPem() throws -> String {
 }
 func sourceWalkthrough(_ bundle: URL, _ directory: URL, _ target: SecKeychain) throws {
     try launch(bundle,directory,target,sourcesCheck:true); sourceSequence=0
-    try activateSources(); try sourcePress("Kalshi credentials")
+    try activateSources(); try sourceExpand("Kalshi credentials")
     let keyA=try controlledPem(), keyB=try controlledPem()
     try sourceFill("provider-key-id","controlled-A"); try sourceFill("provider-private-key",keyA)
-    try sourcePress("Save Kalshi credential"); try waitText("Credential save confirmed")
+    try sourcePress("Save Kalshi credential"); try sourceClearCheck(); try waitText("Credential save confirmed")
     try sourceFill("provider-key-id","controlled-B"); try sourceFill("provider-private-key",keyB)
-    try sourcePress("Save Kalshi credential"); try waitText("already saved")
-    try sourceFill("provider-private-key",keyB); try sourcePress("Replace Kalshi credential"); try waitText("Credential replace confirmed")
-    try quit(); try launch(bundle,directory,target,sourcesCheck:true); sourceSequence=0; try activateSources(); try sourcePress("Kalshi credentials")
+    try sourcePress("Save Kalshi credential"); try sourceClearCheck(); try waitText("already saved")
+    try sourceFill("provider-private-key",keyB); try sourcePress("Replace Kalshi credential"); try sourceClearCheck(); try waitText("Credential replace confirmed")
+    try quit(); try launch(bundle,directory,target,sourcesCheck:true); sourceSequence=0; try activateSources(); try sourceExpand("Kalshi credentials")
     try sourcePress("Check credential status"); try waitText("Saved: controlled-B")
     for (name,identity) in [("Kalshi","kalshi"),("BRTI via Kalshi","brti"),("Coinbase","coinbase"),("Kraken","kraken")] {try sourcePress("Connect " + name);try waitText("Connection requested for " + identity)}
     try sourceFrame("coinbase",#"{"type":"last_match","product_id":"BTC-USD","trade_id":10,"price":"68000.12","time":"2026-11-16T00:00:00Z"}"#)
-    try waitText("68000.12")
+    try sourceExpect("source-coinbase-status",["68000.12 USD/BTC","10 · receipt age"])
     try sourceFrame("kalshi",#"{"type":"subscribed","msg":{"sid":1,"channel":"orderbook_delta"}}"#)
     try sourceFrame("kalshi",#"{"type":"orderbook_snapshot","sid":1,"seq":1,"msg":{"market_ticker":"KXBTC15M-0","yes_dollars_fp":[["0.36","2.00"]],"no_dollars_fp":[["0.64","3.00"]]}}"#)
+    try sourceExpect("source-kalshi-status",["YES ask · 36¢","NO ask · 64¢","KXBTC15M-0 · receipt age"])
     try sourceFrame("kalshi",#"{"type":"subscribed","msg":{"sid":3,"channel":"cfbenchmarks_value"}}"#)
-    try sourceFrame("kalshi",#"{"type":"cfbenchmarks_value","sid":3,"seq":1,"msg":{"index_id":"BRTI","data":"{\"id\":\"BRTI\",\"time\":2000,\"value\":\"68000.12\"}"}}"#)
-    try sourceFrame("kraken",#"{"channel":"trade","type":"snapshot","data":[{"symbol":"BTC/USD","trade_id":1,"price":68000.12,"timestamp":"2026-11-16T00:00:00Z"}]}"#)
+    try sourceFrame("kalshi",#"{"type":"cfbenchmarks_value_indexlist","sid":3,"seq":1,"msg":{"index_ids":["BRTI"]}}"#)
+    try sourceFrame("kalshi",#"{"type":"cfbenchmarks_value","sid":3,"seq":2,"msg":{"index_id":"BRTI","data":"{\"id\":\"BRTI\",\"time\":2000,\"value\":\"68001.23\"}"}}"#)
+    try sourceExpect("source-brti-status",["68001.23 USD/BTC","2000 · receipt age"])
+    try sourceFrame("kraken",#"{"channel":"trade","type":"snapshot","data":[{"symbol":"BTC/USD","trade_id":1,"price":68002.34,"timestamp":"2026-11-16T00:00:00Z"}]}"#)
+    try sourceExpect("source-kraken-status",["68002.34 USD/BTC","1 · receipt age"])
     try sourcePress("Disconnect Kalshi");try waitText("kalshi disconnected")
+    try sourceExpect("source-kalshi-status",["Disconnected"])
+    try sourceFrame("kalshi",#"{"type":"cfbenchmarks_value","sid":3,"seq":3,"msg":{"index_id":"BRTI","data":"{\"id\":\"BRTI\",\"time\":3000,\"value\":\"68003.45\"}"}}"#)
+    try sourceExpect("source-brti-status",["Connection open","68003.45 USD/BTC","3000 · receipt age"])
     try sourceFrame("coinbase","not json") // Ack means invalidity was published, never healthy data.
-    try waitText("Invalid source data")
+    try sourceExpect("source-coinbase-status",["Invalid source data."])
     try sourcePress("Remove Kalshi credential");try waitText("Credential remove confirmed")
+    try sourcePress("Check credential status");try waitText("Missing credential.")
     try quit();print("PASS: isolated sources/native commands/credential lifecycle and observed exit")
 }
 func appNodes() -> [AXUIElement] { nodes(AXUIElementCreateApplication(child)) }
@@ -322,6 +414,22 @@ func recoverySelfTest() throws {
         catch let error as Failure {try require(error.message != "invalid source envelope accepted","invalid source envelope accepted")}
     }
     print("PASS: sources mode, decimal sequence, lexical payload and bounded envelope")
+    try require(sourceFactsMatch("Connection open\n68003.45 USD/BTC\n3000 · receipt age 1 ms",["Connection open","68003.45 USD/BTC","3000 · receipt age"]),"source facts rejected")
+    for facts in [["68001.23 USD/BTC"],["2000 · receipt age"],["Disconnected"]] {
+        try require(!sourceFactsMatch("Connection open\n68003.45 USD/BTC\n3000 · receipt age 1 ms",facts),"wrong source facts accepted")
+    }
+    try require(sourceFactsMatch("Connection open\n68000.12 USD/BTC\n10 · receipt age 1 ms\nConnection open\n68000.12 USD/BTC\n10 · receipt age 1 ms",["Connection open","68000.12 USD/BTC","10 · receipt age"]),"separate repeated AX representations rejected")
+    for observed in ["Connection open\n168000.12 USD/BTC\n10 · receipt age 1 ms", "Connection open\n68000.12 USD/BTC\n110 · receipt age 1 ms", "Connection open\n68000.12 USD/BTCextra\n10 · receipt age 1 ms"] {
+        try require(!sourceFactsMatch(observed,["Connection open","68000.12 USD/BTC","10 · receipt age"]),"source suffix collision accepted")
+    }
+    print("PASS: source assertions reject wrong value, identity and connection state")
+    print("PASS: source assertions reject suffix collisions and extra value text")
+    try require(sourceFactsMatch("Connection open 68000.12 USD/BTC 10 · receipt age 7894 ms Freshness has not been verified. Complete history is unverified.",["68000.12 USD/BTC","10 · receipt age"]),"observed WebKit flattened row rejected")
+    for observed in ["Connection open 168000.12 USD/BTC 10 · receipt age 1 ms", "Connection open 68000.12 USD/BTC 110 · receipt age 1 ms", "Connection open 68000.120 USD/BTC 10 · receipt age 1 ms", "Connection open 68000.12 USD/BTCextra 10 · receipt age 1 ms"] {
+        try require(!sourceFactsMatch(observed,["68000.12 USD/BTC","10 · receipt age"]),"flattened source collision accepted")
+    }
+    print("PASS: observed WebKit flattened text preserves exact price, unit and identity checks")
+
     var acknowledgments: [Int32] = [-1,-1]
     try require(socketpair(AF_UNIX,SOCK_STREAM,0,&acknowledgments) == 0,"acknowledgment self-test socket failed")
     socket = acknowledgments[0]

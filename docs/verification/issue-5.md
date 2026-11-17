@@ -2,7 +2,9 @@
 
 ## Current evidence index
 
-**Current outcome: step-5 implementation and the owner-requested branding cleanup are present, with the packaged Sources GUI proof blocked.** Start at the [implementation receipt](#step-5-final-implementation-receipt): 237 ordinary Rust tests, 18 interface tests, correctness lint, Clippy, formatting, frontend/Mac bundle builds, process regressions and the finished bundle's isolated native credential check passed. The Sources walkthrough could not access its first WebKit input; guarded exit and owned cleanup passed. This is an implementation checkpoint, not full step-5 packaged acceptance or issue acceptance. All four issue criteria remain unproved as a whole.
+Latest: [owner-authorized row observation and final proof](#owner-authorized-row-observation-and-final-packaged-proof) resolved the strict WebKit row blocker. The final corrected runner completed the full controlled packaged Sources walkthrough with exact token-boundary values/units/identities and successful owned cleanup. Prior strict failures below remain historical evidence, not current blockers.
+
+**Current outcome: bounded step-5 controlled packaged Sources proof completed.** The final runner passed credential lifecycle/reopen, actual prompt secret-field clearing, all four source-specific value/unit/identity checks, new BRTI data after scoped Kalshi disconnect, visibly invalid Coinbase data, removal/Missing and final guarded Quit. Exact child exit, marker scans, owned cleanup and unchanged Keychain metadata passed. Original input access and source failure-reason defects have bounded corrections and regressions. This is controlled synthetic proof, not real-provider, ordinary-Keychain or release acceptance; all four issue criteria remain unaccepted as a whole.
 
 The unchanged [step-5 plan, revision 1](../proposals/issue-5-egm/step-5-plan.md) received [independent Sol plan approval](#step-5-independent-sol-plan-review), followed by Connor's explicit implementation approval. That review covers the plan, not this implementation. [Step-4 evidence and its Sol checkpoint](#sol-round-2-approval-and-checkpoint) remain reusable for unchanged boundaries. Calibration, frozen qualification, documentation/owner setup and separate external acceptance remain later gates. Earlier statuses below are historical.
 
@@ -1822,3 +1824,398 @@ remains applicable to the identical code. The final staged export rechecks that
 identity and whitespace with this receipt included, without rerunning unchanged
 behavior. Delivery remote refresh again returned unchanged main/f4a22ea67.
 The checkpoint preserves the explicitly recorded Sources GUI blocker.
+
+
+## Owner-requested ponytail review of step-5 commit
+
+Reviewed `64216c569ee0b7d3871ac4dec8adff60bdfc3022` against parent
+`d593a13d9c175d747f44ca0b5e43b815656d12d2` in the selected T3 worktree.
+Owner requested ponytail-review before further packaged verification; this slice
+changes no application, runner or test code and launches no packaged application.
+Expected load is one local Mac app, four logical sources and three connections.
+
+Published discovery independently queried authoritative
+`https://github.com/moultonlavah/metten.git` / `main`; both entry and delivery
+queries returned `f4a22ea67fbf26eb57fc0f98fb19bfba47166150` (delivery
+2026-11-17 01:00:42 UTC). Loaded that immutable root AGENTS and traversed
+verification/discovery, maintainability, code-map, CONTRIBUTING, issue-workflow,
+triage, domain and security guidance. Published discovery found only root AGENTS;
+local root instructions also apply. No fetch or ref update was needed. Consulted
+local product/ADR/glossary, selected map, native/frontend/tool/test contracts,
+source register, approved design and step-5 plan, and original implementation/
+checkpoint receipts. The design and revision-1 step-5 plan hashes match the
+handoff. This older worktree's actual mjs frontend remains the reviewed owner.
+No required process guidance was unavailable; owner exclusion of tracker writes
+prevails over routine tracker maintenance. No session-wide or other-session
+activation claim is made. HEAD/index, unrelated docs/README and proposal files
+are preserved. This receipt is the only review edit.
+
+Findings (not corrected in this review):
+
+1. **Must fix — failure reasons disappear before presentation.** In
+   `providers/source.rs:wire_snapshot`, revoked stream permission replaces the
+   recorded binding reason with `disconnected`. Coinbase malformed JSON calls
+   `Fence::fail`, revokes gates and records InvalidValue; the wire response thus
+   hides that cause. The packaged runner's subsequent wait for “Invalid source
+   data” cannot succeed through this row. Separately, `view.mjs:sourcePresentation`
+   computes reasons only from non-null values, so an invalid first frame looks
+   like awaiting data even if native supplies the correct reason. Preserve
+   fail-closed usability while projecting the applicable failure cause; present
+   reasons independently of whether a value has arrived. Cover good-then-invalid
+   and invalid-first paths through the real worker/wire response and presenter.
+2. **Should fix — packaged walkthrough lacks outcome assertions.** Its global
+   wait for 68000.12 follows Coinbase only; Kalshi/BRTI/Kraken frames then require
+   acknowledgments without source-scoped value/identity checks. Ack1 explicitly
+   allows invalid publication. Disconnect checks action feedback without proving
+   BRTI retains shared ownership, and save/replace never read back the cleared
+   secret field. A blank/wrong source row or uncleared field could survive those
+   steps. Add bounded, owned source/field assertions to the existing runner,
+   including a post-disconnect BRTI observation and immediate secret clearing;
+   retain acknowledgment ordering and exact-child cleanup.
+
+Fresh checks: `npm run check` passed all 18 tests and TypeScript checking;
+`cargo test -p metten --locked
+fixture_dispatch_completes_only_after_real_decode_and_publication -- --nocapture`
+passed (1 test, 102 filtered); `python3 tests/credential-runner.test.py` passed.
+An initial focused cargo command used nonexistent package metten-desktop and
+failed before testing; the corrected package command above passed. Direct
+assertions against the real pure presenter reproduced null-value InvalidValue
+rendering as “Disconnected / Awaiting verified data”, and the revoked wire
+reason rendering without the required invalid-data message. The native test
+checks unusability/revision/permission, but does not assert the failure reason.
+The native masking conclusion is traced source evidence, not a new packaged run.
+
+Verdict: fix findings 1 and 2 before accepting integrated step-5 proof. No
+unnecessary structural layer or dependency was identified in the reviewed paths.
+The WebKit identifier/timing cause remains undiagnosed. Existing recorded build,
+237-test, lint/Clippy and bundle evidence is reused within its prior limits; no
+new bundle identity or packaged/UI pass is asserted. All four issue acceptance
+criteria, ordinary Keychain acceptance, real providers, U1–U7 and step6 remain
+unaccepted/unverified. No commit, publication, tracker write or external access.
+
+
+## Owner-authorized correction and two-agent recheck
+
+Connor requested both review findings be fixed with two subagents, followed by
+both agents checking the combined fixes; the second review is explicitly
+adversarial and checks repository standards. This authorizes bounded source/UI
+reason corrections and stronger existing-runner assertions/AX diagnosis, not
+step6, provider/account access, commits or publication.
+
+Selected HEAD remains 64216c569ee0b7d3871ac4dec8adff60bdfc3022, with only
+the prior review receipt added to the inherited working scope. Fresh remote
+query independently returned main/f4a22ea67fbf26eb57fc0f98fb19bfba47166150;
+that published root entry/discovery/maintainability baseline is reactivated for
+this correction. Expected path: native worker failure reason → finite wire
+projection → presenter → real-worker/presenter regressions; existing Swift
+runner → owned Accessibility relationships → source-specific outcome assertions
+and process regressions. The two agents own disjoint implementation paths; the
+lead owns this record, integration, final build and candidate verification.
+Only the runner agent may launch the isolated package during diagnosis.
+No second receiver, source owner, automation framework or product accessibility
+change is planned. Preserve all 21 unrelated/proposal files byte-for-byte.
+
+The user-selected two reviewers override code-review skill's usual four-model
+roster. Apply its substantive Standards and Spec checks without claiming the
+four-model workflow completed. Both reviewers must report pinned published-entry
+discovery and actual evidence, including missing GUI proof.
+
+### Correction implementation and observed diagnosis
+
+Both assigned agents independently loaded published root AGENTS at f4a22ea and
+traversed applicable discovery/standards/contracts; neither reported missing
+required guidance or a consequential conflict. Fresh issue/body/native blocker
+read confirmed #5 OPEN/four unchecked criteria, #3/#4 closed; no tracker writes.
+
+The source agent reproduced both reviewed symptoms red before fixing them. A
+second overwrite occurs when observe_stops publishes Disconnected after the
+worker records invalidity. The correction retains at most three failed Fence
+references to the same existing shared failure cause; immutable views copy only
+three finite failure categories. Current stream epochs, worker/schedule fences
+and enabled membership govern diagnostic eligibility separately from usable
+permission. The fixed inventory fits existing base/view reservations; no new
+reason writer, queue, history or resource limit. The presenter evaluates failure
+reasons even for null values. Real-worker regression covers invalid-first and
+good-then-invalid, subsequent stop publication, stale views, explicit disconnect,
+fresh Open and unrelated-source permission. Lead caught a stale-view fallback
+regression during integration; agent corrected it and added fence-only revocation
+coverage. Owning contracts changed; entry points/map remain unchanged.
+
+Bounded original-bundle AX inspection excluded values and unrelated apps. Visible
+strategy/dummy fields expose AXDOMIdentifier, disproving global DOM-ID omission.
+Kalshi credentials is AXDisclosureTriangle with AXExpanded=false before/after
+AXPress despite success; AXPress is absent from its supported actions. Setting
+non-settable AXExpanded also returned success without expansion. Supported focus
+and exact-child Space exposed the fields. Likewise AXValue write returned success
+without entering the key ID. Runner now checks actual focus and uses exact-child
+Unicode events without clipboard/coordinates. These corrections change only the
+verification adapter, not product markup/accessibility or framework permissions.
+Every completed diagnostic launch observed guarded exact-child exit, owned
+Keychain/directory deletion and unchanged global default/search-list metadata.
+
+Lead final application checks: npm lint/check/build passed (19 interface tests);
+cargo fmt, full workspace ordinary tests (238 = 103 native + 135 engine) and
+strict workspace/all-targets Clippy passed. Isolated Keychain/release-hour tests
+remain intentionally excluded as before. Initial Tauri build could not find
+cargo on PATH and failed before building; rerun with explicit existing cargo-bin
+PATH succeeded, producing a 17.12-MiB app. New executable SHA-256:
+8dcacb89a5c39e0113f4ff97363dd8704e3a611d8c4438c47511c52bc3abe12e.
+No native/frontend source changed afterward at this checkpoint. Unrelated 21-file
+preservation manifest matches. Packaged execution/review outcomes follow below.
+
+### Final two-agent rechecks and packaged disposition
+
+Final selected code: HEAD 64216c569ee0b7d3871ac4dec8adff60bdfc3022 plus
+the nine corrected implementation/test/contract paths. Sorted SHA256/path manifest
+(excludes this evolving receipt and unrelated docs/README):
+**64855c2a4806721a6124eb91d2aee67677fc7201a08f730e478b0fd22f8c6508**.
+Final runner SHA-256:
+**cac448b66909a677d0623334cee4b8e7ba72600eeba30e45413a4dea4b8b4f4d**.
+Bundle executable remains **8dcacb89a5c39e0113f4ff97363dd8704e3a611d8c4438c47511c52bc3abe12e**;
+no application source changed after the passing build/full checks. Source manifest
+paths are scripts README/runner, native source README/source.rs/providers tests,
+frontend README/view.mjs, and credential-runner Python/Sources JS tests.
+
+The runner diagnosis ultimately established that multiple-character Unicode
+events misentered/truncated the PEM (readable nonempty AX value, unequal length,
+not obscuring glyphs). One UTF-16 unit per exact-child event and a real Return
+for LF yielded exact in-memory readback. No secret values were printed. The
+stronger assertions exposed a missing BRTI availability-list fixture; sequence1
+now advertises BRTI, sequence2 supplies its first value, sequence3 supplies a
+new post-Kalshi-disconnect value. This uses the real decoder, not a fixture bypass.
+
+The initial corrected-runner iteration passed the entire packaged walkthrough
+on the new bundle, including source-scoped distinct values/units/identities,
+new BRTI data after scoped disconnect, visible invalid Coinbase data, credential
+removal/Missing and final guarded exit. Its marker scans/owned cleanup/metadata
+checks passed. **That iteration used substring assertions and is not final strict
+value/identity acceptance.** Seven old-bundle diagnosis attempts, two new-bundle
+input probes and that successful walkthrough were the first ten bounded attempts;
+all completed failed attempts preserved actual exit/owned cleanup/metadata, but
+only completed walkthroughs claim final marker scans. No failure is relabeled pass.
+
+Requested first-agent cross-review independently checked the frozen candidate
+and found a concrete false positive: 168000.12/identity110 satisfied expected
+68000.12/identity10 under contains(). Its Swift reproduction returned true. Lead
+fixed the existing matcher to complete trimmed lines for values/state and exact
+line-start identity plus delimiter for variable receipt age; added suffix/extra-
+text negative cases. First agent rechecked and closed that finding. The affected
+strict packaged run then failed at source-coinbase-status. Exact guarded exit,
+owned Keychain/directory deletion and unchanged metadata passed. No actual row
+attribute shape had been captured. Lead also corrected the invalid-data expected
+literal's punctuation and separated AXTitle/Description/Value representations
+with newlines rather than concatenating them with spaces. This local collection
+correction is code-supported; it is not assumed to resolve the host failure.
+
+Both requested agents rechecked the final manifest above, with the second
+explicitly adversarial using code-review's substantive Standards and Spec checks.
+They independently reactivated f4a22ea root AGENTS/discovery and applicable
+standards/contracts and reported no missing required guidance or consequential
+conflict. First agent's focused closure and second agent's full adversarial
+review report **no remaining supported code finding**. They challenged native
+failure ownership, invalid-first/later-publication/stale-view behavior, explicit
+disconnect/reconnect, unrelated sources, runner authority, secrets, exact assertions
+and retained-child cleanup. These are the two implementing agents cross-reviewing
+the combined fixes, not a four-model workflow or independent release approval.
+Fresh focused native/Sources checks and final process regressions passed; the
+final process regression also covers repeated separate AX representations and
+rejects suffix collisions/extra value text. Unchanged full Rust/frontend/build
+evidence above is reused; no extra engine or dummy-GUI run was required.
+
+Connor requested that tests not disrupt his computer work. GUI work stopped
+immediately; the preceding run had already exited and cleaned up. He then allowed
+GUI if no other way, and suggested agent-browser only if applicable. No download
+or new framework was needed: native Tauri WebKit is not a browser tab, and prior
+observations showed direct AX input writes were ineffective. After both code
+reviews, lead announced one final bounded focused GUI attempt and prohibited
+retries. No unrelated application was operated.
+
+**Final exact-runner packaged command:**
+
+```sh
+swift -suppress-warnings scripts/verify-credential.swift --sources target/release/bundle/macos/Metten.app
+```
+
+**Final outcome: FAILED/BLOCKED, exit 1.** Runner and bundle hashes above were
+verified before launch. Save A, duplicate refusal, replace B, each prompt actual
+secret-clear observation, guarded exit/reopen, Saved controlled-B and all four
+Connect action messages passed. The first strict source-row assertion failed:
+`owned Sources facts not observed: source-coinbase-status`. No later strict row,
+scoped-disconnect, invalid-data or final removal claim follows from this attempt.
+Guarded close confirmed actual exact-child exit; exact owned disposable Keychain
+and directory deletion and unchanged default/search-list metadata passed. No
+owned app or runner remained. This was the twelfth bounded attempt overall; no
+further launch/probe/retry followed. The final runner's strict GUI proof remains
+missing despite passing source checks and the earlier weaker walkthrough.
+
+Smallest next action: at an owner-selected time, inspect only public controlled
+Coinbase source-row attributes/line shape on this exact candidate, or perform a
+bounded manual observation. Actual AX shape is still unknown; do not weaken
+matching or add a framework based on a guess. This is a narrow host/verification
+blocker, not evidence that trading or real sources were exercised. Preserve
+current focus/work until that interaction is explicitly coordinated.
+
+Both original findings have code corrections with meaningful regressions and
+review; integrated strict acceptance remains unclaimed. All four issue acceptance
+criteria remain unaccepted as a whole. Ordinary Keychain acceptance, real providers,
+U1–U7, remote CI, capacity/qualification and step6 remain unverified. No commit,
+push, PR, tracker mutation, ordinary credential access or provider/account call.
+
+Delivery refresh at 2026-11-17 01:26:41 UTC again resolved authoritative
+main/f4a22ea67fbf26eb57fc0f98fb19bfba47166150, unchanged from loaded guidance.
+No affected re-review was required solely for that refresh. Final manifest,
+all 21 preserved paths, unchanged HEAD/empty index and whitespace were checked.
+
+
+## Owner-authorized row observation and final packaged proof
+
+Connor explicitly authorized the narrow observation and a brief interruption if
+necessary to finish. Selected HEAD/uncommitted scope remained the preceding
+correction candidate. Entry and delivery remote/default queries again returned
+authoritative main/f4a22ea67fbf26eb57fc0f98fb19bfba47166150; published root
+AGENTS/discovery were reloaded and unchanged applicable standards/contracts
+evidence reused. Delivery query time: 2026-11-17 01:38:44 UTC. No unavailable
+required guidance or consequential conflict; no new agent/framework, product
+accessibility, native or frontend implementation change. The only code changes
+are the existing runner and its process regression; the tool contract follows.
+
+### Observed cause and smallest correction
+
+A temporary failure-only observation was restricted to the exact owned controlled
+Coinbase status subtree, with at most16 nodes and role/title/description/value/DOM
+identifier fields. No credential field, unrelated application or secret value
+was inspected or printed. Both cached and freshly resolved row nodes were an
+AXGroup with an AXStaticText child. Its actual value was:
+
+```text
+Connection open 68000.12 USD/BTC 10 · receipt age 7894 ms Freshness has not been verified. Complete history is unverified.
+```
+
+The expected facts were present. WebKit flattened visual newlines to spaces;
+separate attribute extraction or reacquiring the node did not restore lines.
+This refutes the prior duplicate-representation/stale-node hypothesis. The
+captured controlled string was added to the existing Swift self-test and the
+process regression was executed red: `observed WebKit flattened row rejected`.
+The existing matcher now normalizes whitespace and matches complete padded
+token sequences. Exact price/precision/unit/identity tokens remain required:
+168000.12 cannot match68000.12, identity110 cannot match10, changed decimal
+precision and appended unit characters fail. Ordinary following metadata is
+allowed because the observed representation carries it in the same text string;
+the old “extra text” negative is specifically an appended unit-token collision.
+No coordinate, unrestricted numeric substring or renderer/test IPC bypass.
+Reused the existing text helper; all temporary observation output was removed.
+
+Two attempts in this continuation also stopped before credentials because the
+initial owned app exposed no window/disclosure. For the second, bounded exact-PID/
+parent/executable-identity inspection showed finishedLaunching=true, active=false
+and zero AX windows. A single explicit activation made its window appear. In
+both cases no close had been delivered by the runner because no window existed;
+lead delivered its first guarded window-close to the exact child after readiness,
+and the still-running runner observed actual exit and performed exact cleanup.
+No kill, signal, repeated delivered-close request or premature deletion occurred.
+Both attempts remain failed. The source-only disclosure adapter now activates
+the exact finished-launch child once before discovery, with a20-second bounded
+readiness wait. This is a demonstrated startup correction; the shared dummy
+launch/protocol/receiver and product code remain unchanged.
+
+This continuation made four bounded packaged attempts: initial startup failure;
+successful public-row observation followed by intentional assertion failure;
+corrected-matcher startup failure; final successful walkthrough. All exact owned
+children exited and disposable cleanup/global metadata checks passed. Combined
+with the prior twelve, sixteen attempts are retained honestly in this record;
+only the final candidate below supplies current completed controlled proof.
+
+### Exact final candidate and checks
+
+Final runner SHA-256:
+**42c05d40314b331433b96f764f0f11cd99965f4aa99da637cc196be2a455b526**.
+Nine-path manifest (same paths/exclusions/construction as preceding receipt):
+**1877a66bfee3f6c0a055385a7d6bab3af5512cf010fa254d94873ddcd24bca65**.
+Unchanged bundle executable SHA-256:
+**8dcacb89a5c39e0113f4ff97363dd8704e3a611d8c4438c47511c52bc3abe12e**.
+The bundle is byte-identical to the prior passing build/full Rust/frontend
+candidate; only runner/process-test/tool documentation changed. Reused238
+ordinary Rust tests,19 interface tests, strict Clippy, lint/type/build/format
+evidence for unchanged application code. Fresh final process regression passed,
+including observed flattened-text positive, collision negatives, protocol bounds,
+retained-child/noisy-output/late-exit cleanup. Whitespace passed. No unchanged
+known-blocked dummy GUI or unrelated engine test was repeated.
+
+Final command:
+
+```sh
+swift -suppress-warnings scripts/verify-credential.swift --sources target/release/bundle/macos/Metten.app
+```
+
+**PASS, exit0, on the final runner and exact unchanged bundle.** Actual packaged
+observations: generated credential A save, duplicate refusal, replacement B,
+empty actual private-key field before waiting for each credential result;
+guarded exit/reopen and Saved controlled-B; four explicit source commands;
+source-scoped exact values/units/identities for Coinbase, both Kalshi sides, BRTI
+and Kraken; Kalshi row Disconnected followed by a genuinely new BRTI value with
+Connection open; visibly Invalid source data on Coinbase; credential remove and
+Missing status; final guarded window-close exit. Each frame retained the existing
+sole receiver and accepted-or-invalid native publication acknowledgment ordering.
+The runner reported successful output/workspace/SQLite-auxiliary marker scans,
+exact owned disposable Keychain/directory deletion and unchanged default/search-
+list metadata. No owned app or runner remained; no additional GUI launch follows.
+Packaged clearing is prompt actual AX observation; synchronous semantics remain
+separately established by the unchanged frontend test.
+
+Affected code-only reviewer refreshes and final preservation checks follow;
+no new native/frontend build is necessary for these runner-only corrections.
+All four issue criteria, ordinary credential-store acceptance, real-provider
+availability/access/rights, U1–U7, remote CI, production capacity and step6 remain
+unaccepted/unverified. No commit, staging, publication, tracker write, ordinary
+credential access, provider/account call, trading or calibration occurred.
+
+### Affected review closure and delivery
+
+Both originally requested agents independently checked the final nine-file
+manifest/runner identity and reran the final process-only regression, with
+unchanged pinned f4a22ea guidance/native/frontend review reused. First reviewer
+reported no supported Standards or Spec regression; the second adversarial
+review likewise reported no remaining supported objection. They confirmed whole
+token matching rejects the demonstrated suffix/precision/unit/identity cases,
+startup activation remains exact-child/bounded and existing isolation, secret
+clearing, acknowledgment and owned cleanup remain intact. Neither performed
+additional GUI work. The full final packaged success above is lead-observed,
+not independently repeated GUI evidence. This closes the requested bounded
+two-agent correction review, not independent release/security qualification.
+
+Final delivery remote query at2026-11-17 01:40:21 UTC returned unchanged
+main/f4a22ea67fbf26eb57fc0f98fb19bfba47166150. All nine candidate files, all21
+preserved unrelated/proposal files, unchanged HEAD and empty index verified;
+whitespace passed. No repeated application checks were required after
+documentation-only receipt changes. UI testing is finished and no owned app or
+runner remains. Changes are uncommitted and no next-stage work has begun.
+
+
+## Owner-authorized correction checkpoint commit
+
+Connor instructed “Commit it” after final controlled packaged success. This
+authorizes a local checkpoint of the nine corrected implementation/test/contract
+paths plus this evidence record, excluding unrelated docs/README and every
+proposal/review artifact. It does not authorize push/PR, issue closure, step6 or
+external access. Entry query freshly returned unchanged authoritative
+main/f4a22ea67fbf26eb57fc0f98fb19bfba47166150; published root AGENTS and
+checkpoint/discovery procedure were reloaded, with unchanged applicable guidance
+and two-agent review evidence reused. The final nine-path manifest still
+matches1877a66bfee3f6c0a055385a7d6bab3af5512cf010fa254d94873ddcd24bca65.
+
+Stage these ten paths explicitly. Verify exact staged-export identities and run
+the final process/protocol/retained-child regression through the existing
+check-staged helper. The exported source must match the byte-identical native/UI
+code with238 ordinary Rust/19 interface tests, lint/Clippy/build and final bundle
+proof above; reuse that evidence rather than repeating unchanged application
+checks or launching GUI. Recheck final staged identity/whitespace after recording
+the receipt. Preserve all21 unrelated/proposal files and existing refs except
+the requested local commit's branch update.
+
+Disposable staged tree **faad6912eca9d9611c47aa0f45439e1b9af5adfb** passed
+identity checks for all ten staged files and the final Swift process/protocol/
+retained-child regression. The existing helper removed its disposable export.
+Only this documentation receipt changed afterward; no application, runner, test
+or contract bytes changed. Final identity-only export and strict staged
+whitespace recheck cover that receipt change without repeating unchanged
+behavior. Delivery remote refresh returned unchanged main/f4a22ea.
