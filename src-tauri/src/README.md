@@ -275,6 +275,9 @@ The socket reader holds at most one charged received frame while waiting for an 
 
 [discovery.rs](providers/discovery.rs) orchestrates only the fixed public metadata
 routes; charged route/token/epoch receipts are parsed on the source worker.
+Initial-attempt scheduling is separate from completed exchange/series validation:
+recoverable status, budget or deadline failures retain those startup checks for
+the next paced attempt. Only successful discovery establishes validation.
 Startup uses at most six planned GETs, successor discovery four, and relevant
 lifecycle revalidation only the retained exact details. Retries have separate
 actual-attempt accounting. At most two pages/400 candidates and two confirmed

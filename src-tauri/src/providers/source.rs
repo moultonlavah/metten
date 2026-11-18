@@ -2544,7 +2544,7 @@ async fn run_metadata(
 ) -> Result<(), Failure> {
     use metten_engine::sources::Stream;
     let mut epoch_utc = source_clock.1;
-    let mut startup = !*metadata_validated;
+    let mut initial_attempt = !*metadata_validated;
     let mut previous_count = 0;
     let mut checks: Option<(i64, discovery::PreparationChecks)> = None;
     let mut attempted_metadata = None;
@@ -2617,10 +2617,12 @@ async fn run_metadata(
                     .is_some_and(|(_, c)| c.due(relative, !needs_work, false, false));
                 let post_open = relative >= open;
                 let permitted = !post_open || missing_after_open.is_none_or(|t| instant >= t);
-                let request = startup
+                let request = initial_attempt
                     || (needs_work && (due || retired) && permitted)
                     || (!unverified.is_empty() && attempted_metadata != Some(token) && permitted);
                 if request {
+                    initial_attempt = false;
+                    let startup = !*metadata_validated;
                     attempted_metadata = Some(token);
                     if post_open {
                         missing_after_open = Some(instant + Duration::from_secs(60));
@@ -2645,7 +2647,6 @@ async fn run_metadata(
                     };
                     match result {
                         Ok(discovered) => {
-                            startup = false;
                             *metadata_validated = true;
                             let (reply, receive) = tokio::sync::oneshot::channel();
                             let deadline = Instant::now() + SHUTDOWN;
@@ -2663,17 +2664,18 @@ async fn run_metadata(
                             .await?;
                             match installed {
                                 Ok(()) => {
-                                    startup = false;
                                     *metadata_validated = true;
                                 }
                                 Err(Failure::Stopped | Failure::Protocol) => (),
                                 Err(error) => return Err(error),
                             }
                         }
-                        Err(Failure::Budget | Failure::Unavailable | Failure::Deadline) => {
-                            startup = false;
-                        }
-                        Err(Failure::Stopped) => (),
+                        Err(
+                            Failure::Budget
+                            | Failure::Unavailable
+                            | Failure::Deadline
+                            | Failure::Stopped,
+                        ) => (),
                         Err(error) => {
                             use metten_engine::sources::Unavailable;
                             view.schedule_loss(ScheduleLoss {
@@ -2831,6 +2833,100 @@ mod tests {
         );
         assert_eq!(after.epoch_utc_ms, 0);
     }
+    #[tokio::test]
+    async fn startup_checks_survive_recoverable_discovery_failure() {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let transport = Arc::new(transport::Transport::controlled(
+            listener.local_addr().unwrap(),
+        ));
+        let (first, received) = tokio::sync::oneshot::channel();
+        let peer = tokio::spawn(async move {
+            let mut first = Some(first);
+            let mut paths = Vec::new();
+            for _ in 0..2 {
+                let (mut socket, _) = tokio::time::timeout(SHUTDOWN, listener.accept())
+                    .await
+                    .unwrap()
+                    .unwrap();
+                let mut request = Vec::new();
+                let mut chunk = [0; 1024];
+                while !request.ends_with(b"\r\n\r\n") {
+                    let n = socket.read(&mut chunk).await.unwrap();
+                    assert!(n > 0 && request.len() < 8192);
+                    request.extend_from_slice(&chunk[..n]);
+                }
+                paths.push(
+                    std::str::from_utf8(&request)
+                        .unwrap()
+                        .lines()
+                        .next()
+                        .unwrap()
+                        .split_whitespace()
+                        .nth(1)
+                        .unwrap()
+                        .to_owned(),
+                );
+                if paths.len() == 2 {
+                    break;
+                }
+                let body = r#"{"exchange_active":false}"#;
+                socket.write_all(format!("HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}", body.len()).as_bytes()).await.unwrap();
+                if let Some(first) = first.take() {
+                    first.send(()).unwrap();
+                }
+            }
+            paths
+        });
+        let worker = SourceWorker::prepare_display(transport.memory().clone()).unwrap();
+        let clock = (worker.epoch, worker.epoch_utc_ms);
+        let mut owner = Coordinator::new();
+        let handle = owner.start_sources(worker).unwrap();
+        handle.enable(0, true).unwrap();
+        let prepared = handle.clone();
+        tokio::task::spawn_blocking(move || prepared.prepare_fixture_markets())
+            .await
+            .unwrap()
+            .unwrap();
+        let latest = handle.latest.clone();
+        let command = handle.command.clone();
+        let (stop, stopped) = watch::channel(false);
+        let task = tokio::spawn(async move {
+            let mut validated = false;
+            let result = run_metadata(
+                &transport,
+                latest,
+                command,
+                Fence::new(),
+                stopped,
+                clock,
+                &mut validated,
+            )
+            .await;
+            (result, validated)
+        });
+        received.await.unwrap();
+        // Let the first failed attempt finish before triggering a fresh metadata-token check.
+        tokio::time::sleep(Duration::from_millis(1100)).await;
+        handle.schedule.send_replace(Some(ScheduleLoss {
+            epoch: None,
+            reason: metten_engine::sources::Unavailable::MetadataChanged,
+            terminal: false,
+        }));
+        let paths = peer.await.unwrap();
+        stop.send_replace(true);
+        let (_, validated) = tokio::time::timeout(SHUTDOWN, task).await.unwrap().unwrap();
+        owner.shutdown(Instant::now() + SHUTDOWN).await.unwrap();
+        assert!(!validated);
+        assert_eq!(
+            paths,
+            [
+                "/trade-api/v2/exchange/status",
+                "/trade-api/v2/exchange/status"
+            ]
+        );
+    }
+
     #[test]
     fn ordinary_metadata_work_is_not_a_sleep_event_and_terminal_facts_are_not_lost() {
         use metten_engine::sources::Unavailable;
