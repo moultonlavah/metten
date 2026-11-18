@@ -1,6 +1,6 @@
 import { invoke } from '@tauri-apps/api/core';
 import type { Action, Snapshot, StrategyRequest, StrategyResponse, StrategyDetail, SourceName, SourceRequest, SourceResponse, SourceSnapshot, ProviderCredentialResponse } from './contract';
-import { presentation, strategyFailure, sourceFailure, sourcePresentation } from './view.mjs';
+import { presentation, strategyFailure, sourceFailure, sourcePresentation } from './view';
 import './style.css';
 
 function element<T extends HTMLElement>(id: string): T {
