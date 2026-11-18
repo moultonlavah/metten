@@ -262,8 +262,8 @@ document.addEventListener?.('visibilitychange', () => {
 for (const name of sourceNames) {
   for (const operation of ['connect', 'disconnect'] as const) element(`source-${name}-${operation}`).addEventListener('click', () => {
     sourceGeneration++;
-    const actionSequence = ++sourceActionSequence;
     if (sourceActionPending && operation === 'connect') { element('source-status').textContent = 'A source action is in progress. Wait and retry.'; return; }
+    const actionSequence = ++sourceActionSequence;
     const ownsPending = !sourceActionPending;
     sourceActionPending = true;
     element('source-status').textContent = `${operation === 'connect' ? 'Connecting' : 'Disconnecting'} ${name}…`;

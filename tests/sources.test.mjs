@@ -70,6 +70,14 @@ test('revision comparison stays exact above the JavaScript safe-integer limit', 
   h.calls.shift().resolve(snapshot('9007199254740992')); await setImmediate();
   assert.match(h.element('source-kalshi-status').textContent, /explicitly refused/);
 });
+test('ignored Connect clicks preserve the pending request failure', async () => {
+  const h = await harness(); h.open(); h.calls.shift().resolve(snapshot()); await setImmediate();
+  h.click('source-kalshi-connect'); const connect = h.calls.shift();
+  h.click('source-kalshi-connect');
+  assert.equal(h.calls.length, 0, 'the second click sends no native request');
+  connect.reject({ code: 'missing' }); await setImmediate();
+  assert.equal(h.element('source-status').textContent, sourceFailure({ code: 'missing' }));
+});
 test('disconnect remains available during pending Connect and late action success is discarded', async () => {
   const h = await harness(); h.open(); h.calls.shift().resolve(snapshot()); await setImmediate();
   h.click('source-kalshi-connect'); const connect = h.calls.shift();
