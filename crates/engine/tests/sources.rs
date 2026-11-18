@@ -1218,11 +1218,21 @@ fn reverse_disjoint_coverage_never_fabricates_contiguous_startup_history() {
 #[test]
 fn unready_expired_markets_release_slots_but_preserve_series_identity() {
     let mut s = state(true);
+    assert_eq!(
+        s.market_ids().collect::<Vec<_>>(),
+        s.snapshot(0)
+            .unwrap()
+            .markets
+            .iter()
+            .map(|m| m.descriptor.market_id.as_str())
+            .collect::<Vec<_>>()
+    );
     let old = s.stamp(&[1, 3]).unwrap();
     s.apply(envelope(1800001, SourceEvent::Advance)).unwrap();
     assert!(!s.is_current(&old));
     let view = s.snapshot(1800001).unwrap();
     assert!(view.markets.is_empty() && view.bindings.is_empty());
+    assert!(s.market_ids().next().is_none());
     let mut wrong = market("future", 1800001);
     wrong.series_id = "other_series".into();
     assert_eq!(
@@ -1253,6 +1263,7 @@ fn unready_expired_markets_release_slots_but_preserve_series_identity() {
     ))
     .unwrap();
     assert_eq!(s.snapshot(1800001).unwrap().markets.len(), 1);
+    assert_eq!(s.market_ids().collect::<Vec<_>>(), vec!["future"]);
     assert!(!s.is_current(&old));
 }
 
@@ -2095,4 +2106,119 @@ fn display_catalog_is_fixed_disconnected_and_grants_no_capabilities() {
             .count(),
         3
     );
+}
+
+#[test]
+fn continuous_coverage_preserves_prior_readiness_without_waiving_new_or_expired_readiness() {
+    for mode in ["continuous", "first_at_open", "expired", "disjoint"] {
+        let mut document: serde_json::Value = serde_json::from_str(rules().json()).unwrap();
+        document["measurements"] = json!([{"id":"average","operation":"rolling_average","of":{"reference":"ask"},"lookback_seconds":1}]);
+        let strategy = ValidatedStrategy::parse(&document.to_string()).unwrap();
+        let bs = vec![binding(1, "m", Side::Yes), binding(2, "m", Side::No)];
+        let markets = vec![market("m", 2001)];
+        let mut e = Evaluator::new(
+            strategy.clone(),
+            RunContext {
+                strategy_version: "controlled".into(),
+                run_id: "continuous-ready".into(),
+                go_time: "controlled".into(),
+                series_id: "btc15m".into(),
+                markets: markets.clone(),
+                bindings: bs.clone(),
+            },
+        )
+        .unwrap();
+        let mut s = SourceState::new(
+            &strategy,
+            &markets,
+            &bs,
+            &[(1, controlled()), (2, controlled())],
+        )
+        .unwrap();
+        connect(&mut s, 0);
+        let until = if mode == "expired" { 2001 } else { 10000 };
+        let init = values(
+            &mut s,
+            0,
+            vec![
+                update(bs[0].clone(), "30", None, until),
+                update(bs[1].clone(), "60", None, until),
+            ],
+        );
+        finish(&mut e, init);
+        let metadata = verify(&mut s, "m", 0);
+        finish(&mut e, metadata);
+        let cover = |s: &mut SourceState, start, end| {
+            s.apply(envelope(
+                end,
+                SourceEvent::Update {
+                    stream: Stream::Book,
+                    token: s.token(Stream::Book),
+                    updates: vec![],
+                    coverage: vec![
+                        CoverageFact {
+                            binding_id: 1,
+                            start_ms: start,
+                            end_ms: end,
+                        },
+                        CoverageFact {
+                            binding_id: 2,
+                            start_ms: start,
+                            end_ms: end,
+                        },
+                    ],
+                },
+            ))
+            .unwrap()
+        };
+        if mode != "first_at_open" {
+            let effect = cover(&mut s, 0, 1000);
+            finish(&mut e, effect);
+        }
+        let start = if mode == "disjoint" {
+            1001
+        } else if mode == "first_at_open" {
+            0
+        } else {
+            1000
+        };
+        let effect = cover(&mut s, start, 2001);
+        finish(&mut e, effect);
+        if mode == "expired" {
+            let renewal = values(
+                &mut s,
+                2001,
+                bs.iter()
+                    .map(|b| BindingUpdate {
+                        binding: b.clone(),
+                        unit: RuleUnit::ContractCents,
+                        value: None,
+                        valid_until_ms: Some(10000),
+                    })
+                    .collect(),
+            );
+            finish(&mut e, renewal);
+        }
+        let boundary = s
+            .apply(envelope(
+                2001,
+                SourceEvent::Boundary {
+                    market_id: "m".into(),
+                },
+            ))
+            .unwrap();
+        let entered = boundary
+            .batch
+            .transactions
+            .iter()
+            .flat_map(|t| &t.changes)
+            .any(|c| matches!(c, EvidenceChange::MarketBoundary { .. }));
+        assert_eq!(entered, mode == "continuous", "{mode}");
+        let decision = finish_with_objective(&mut e, boundary, Some(objective()));
+        assert_eq!(decision.candidate.is_some(), mode == "continuous", "{mode}");
+        if let Some(candidate) = decision.candidate {
+            assert_eq!(candidate.side, Side::Yes);
+            assert_eq!(candidate.option_id, "buy");
+        }
+    }
 }

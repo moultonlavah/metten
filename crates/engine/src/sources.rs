@@ -631,9 +631,9 @@ impl SourceState {
             stamp: self.stamp(ids)?,
         })
     }
-    fn readiness(&self, at_ms: u64) -> [bool; 2] {
+    fn readiness(&self, at_ms: u64, coverage: &[CoverageFact]) -> [bool; 2] {
         std::array::from_fn(|i| {
-            i < self.markets.len() && self.preparation(i, at_ms) == Preparation::Ready
+            i < self.markets.len() && self.preparation(i, at_ms, coverage) == Preparation::Ready
         })
     }
     fn admission(&self, at_ms: u64) -> Admission {
@@ -661,7 +661,7 @@ impl SourceState {
         if let Some(t) = effect.batch.transactions.last() {
             self.transaction = t.number;
         }
-        let ready = self.readiness(at);
+        let ready = self.readiness(at, &[]);
         for (i, market) in self.markets.iter_mut().enumerate() {
             if !ready[i] {
                 market.ready_since = None;
@@ -700,7 +700,7 @@ impl SourceState {
             return Err(failure("resource_limit"));
         }
         // Observe expiry before applying a renewal at the same accepted time.
-        let previous_ready = self.readiness(c.at_ms);
+        let mut previous_ready = self.readiness(c.at_ms, &[]);
         match envelope.event {
             SourceEvent::Update {
                 stream,
@@ -844,6 +844,17 @@ impl SourceState {
                     }
                     if !ids.contains(&fact.binding_id) {
                         ids.push(fact.binding_id);
+                    }
+                }
+                if !self.initial_boundary_emitted
+                    && updates.is_empty()
+                    && !accepted_coverage.is_empty()
+                {
+                    // Continuous quiet proof preserves readiness; expiry and disjoint history do not.
+                    let refreshed = self.readiness(c.at_ms, &accepted_coverage);
+                    for (i, was_ready) in previous_ready.iter_mut().enumerate() {
+                        *was_ready |= refreshed[i]
+                            && self.markets.get(i).is_some_and(|m| m.ready_since.is_some());
                     }
                 }
                 let mut effect = self.effect(c, vec![changes], accepted_coverage, &ids)?;
@@ -1139,7 +1150,7 @@ impl SourceState {
                 if i128::from(c.at_ms) < i128::from(market.descriptor.open_ms) {
                     return Err(failure("invalid_order"));
                 }
-                let ready = self.preparation(index, c.at_ms) == Preparation::Ready;
+                let ready = self.preparation(index, c.at_ms, &[]) == Preparation::Ready;
                 let exact =
                     i128::from(c.at_ms) == i128::from(self.markets[index].descriptor.open_ms);
                 let enter = ready
@@ -1219,7 +1230,7 @@ impl SourceState {
         {
             return Err(failure("invalid_request"));
         }
-        let previous_ready = self.readiness(at_ms);
+        let previous_ready = self.readiness(at_ms, &[]);
         let scope = if scope == Scope::Stream(Stream::Metadata) {
             Scope::Market
         } else {
@@ -1376,15 +1387,25 @@ impl SourceState {
                 })
             })
     }
-    fn history_ready(&self, b: &Bound, now: u64) -> bool {
+    fn history_ready(&self, b: &Bound, now: u64, coverage: &[CoverageFact]) -> bool {
         let required = self.requirements[b.requirement].startup_ms;
         required == 0
             || (b.caps.history.is_none()
-                && b.coverage.is_some_and(|(start, end)| {
+                && b.coverage.is_some_and(|(mut start, mut end)| {
+                    for fact in coverage
+                        .iter()
+                        .filter(|f| f.binding_id == b.descriptor.binding_id)
+                    {
+                        if fact.start_ms > end || fact.end_ms < start {
+                            return false;
+                        }
+                        start = start.min(fact.start_ms);
+                        end = end.max(fact.end_ms);
+                    }
                     end >= now && now.saturating_sub(start) >= required
                 }))
     }
-    fn preparation(&self, index: usize, now: u64) -> Preparation {
+    fn preparation(&self, index: usize, now: u64, coverage: &[CoverageFact]) -> Preparation {
         let m = &self.markets[index];
         if !m.verified {
             return Preparation::Identified;
@@ -1403,13 +1424,18 @@ impl SourceState {
                 || (requirement.side == Some(SourceSide::Selected) && matching.len() != 2)
                 || matching
                     .iter()
-                    .any(|b| !self.usable(b, now) || !self.history_ready(b, now))
+                    .any(|b| !self.usable(b, now) || !self.history_ready(b, now, coverage))
             {
                 return Preparation::Collecting;
             }
         }
         Preparation::Ready
     }
+    /// Retained market identities in snapshot order, without constructing a view.
+    pub fn market_ids(&self) -> impl Iterator<Item = &str> {
+        self.markets.iter().map(|m| m.descriptor.market_id.as_str())
+    }
+
     pub fn snapshot(&self, now: u64) -> Result<SourceSnapshot, SourceFailure> {
         if now < self.last_at {
             return Err(failure("invalid_request"));
@@ -1489,7 +1515,7 @@ impl SourceState {
                 .map(|(i, m)| MarketView {
                     descriptor: m.descriptor.clone(),
                     verified: m.verified,
-                    preparation: self.preparation(i, now),
+                    preparation: self.preparation(i, now, &[]),
                 })
                 .collect(),
             bindings: self
@@ -1505,7 +1531,7 @@ impl SourceState {
                     age_ms: b.receipt.map(|at| now - at),
                     valid_until_ms: b.valid_until,
                     usable: !self.stopped && self.usable(b, now),
-                    history_ready: self.history_ready(b, now),
+                    history_ready: self.history_ready(b, now, &[]),
                     covered_through_ms: b.coverage.map(|(_, end)| end),
                     reason: b.reason.or(if b.receipt.is_none() {
                         Some(Unavailable::Awaiting)

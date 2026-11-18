@@ -35,6 +35,11 @@ fn signatures_use_canonical_finite_requests() {
     for pem in [
         rsa.to_pkcs8_pem(LineEnding::LF).unwrap(),
         rsa.to_pkcs1_pem(LineEnding::LF).unwrap(),
+        format!(
+            " \n{}\n",
+            rsa.to_pkcs1_pem(LineEnding::LF).unwrap().as_str()
+        )
+        .into(),
     ] {
         let key = signing::Key::parse(&pem).unwrap();
         assert_eq!(key.kind(), "rsa");
@@ -113,17 +118,19 @@ async fn budgets_count_attempts_and_expire_before_spending() {
 async fn full_intake_revokes_without_waiting_and_obsolete_results_stay_revoked() {
     let (tx, mut rx) = intake();
     let fence = Fence::new();
-    admit(
-        &tx,
-        &fence,
-        Intake::new(
-            Provider::Kalshi,
+    for _ in 0..RAW_SLOTS {
+        admit(
+            &tx,
             &fence,
-            memory::Memory::default().copy(&[1]).unwrap(),
-            Instant::now(),
-        ),
-    )
-    .unwrap();
+            Intake::new(
+                Provider::Kalshi,
+                &fence,
+                memory::Memory::default().copy(&[1]).unwrap(),
+                Instant::now(),
+            ),
+        )
+        .unwrap();
+    }
     assert_eq!(
         admit(
             &tx,
@@ -2193,7 +2200,9 @@ fn repeated_native_rollover_retains_two_books_and_reuses_shared_subscription() {
 
 #[test]
 fn prepared_rollover_crosses_opening_between_worker_ticks_once_at_scheduled_time() {
-    check_native_rollover(1);
+    for delay in [1, 2, 5] {
+        check_native_rollover(delay);
+    }
 }
 
 #[test]
@@ -3266,4 +3275,282 @@ async fn disconnect_cancels_pending_connect_and_cannot_be_coalesced_into_old_per
     assert_ne!(after["bindings"][1]["generation"], generation);
     assert!(!before.stream_current(metten_engine::sources::Stream::Coinbase));
     owner.shutdown(Instant::now() + SHUTDOWN).await.unwrap();
+}
+
+#[test]
+fn intake_arrival_interrupts_idle_wait_without_lost_wake() {
+    for arrive_before_wait in [true, false] {
+        let (tx, mut rx) = intake();
+        let (registered_tx, registered_rx) = std::sync::mpsc::channel();
+        let (ready_tx, ready_rx) = std::sync::mpsc::channel();
+        let (done_tx, done_rx) = std::sync::mpsc::channel();
+        let worker = std::thread::spawn(move || {
+            let idle = Arc::new(IntakeWake::default());
+            let waker = std::task::Waker::from(idle.clone());
+            assert!(matches!(
+                poll_intake(&mut rx, &waker),
+                Err(mpsc::error::TryRecvError::Empty)
+            ));
+            registered_tx.send(()).unwrap();
+            ready_rx.recv().unwrap();
+            idle.wait(Duration::from_secs(2));
+            assert!(poll_intake(&mut rx, &waker).is_ok());
+            done_tx.send(()).unwrap();
+        });
+        registered_rx.recv().unwrap();
+        if !arrive_before_wait {
+            ready_tx.send(()).unwrap();
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        let fence = Fence::new();
+        admit(
+            &tx,
+            &fence,
+            Intake::new(
+                Provider::Coinbase,
+                &fence,
+                memory::Memory::default().copy(b"{}").unwrap(),
+                Instant::now(),
+            ),
+        )
+        .unwrap();
+        if arrive_before_wait {
+            ready_tx.send(()).unwrap();
+        }
+        let result = done_rx.recv_timeout(Duration::from_millis(500));
+        worker.join().unwrap();
+        assert!(
+            result.is_ok(),
+            "arrival must interrupt idle wait, including before park"
+        );
+    }
+}
+
+#[test]
+fn intake_notification_survives_a_consumed_park_token() {
+    let (ready, registered) = std::sync::mpsc::channel();
+    let (notified, notification) = std::sync::mpsc::channel();
+    let (done, completion) = std::sync::mpsc::channel();
+    let worker = std::thread::spawn(move || {
+        let idle = Arc::new(IntakeWake::default());
+        ready.send(idle.clone()).unwrap();
+        notification.recv().unwrap();
+        std::thread::park_timeout(Duration::ZERO);
+        idle.wait(Duration::from_secs(2));
+        done.send(()).unwrap();
+    });
+    let idle = registered.recv().unwrap();
+    std::task::Waker::from(idle).wake_by_ref();
+    notified.send(()).unwrap();
+    let result = completion.recv_timeout(Duration::from_millis(500));
+    worker.join().unwrap();
+    assert!(
+        result.is_ok(),
+        "arrival flag must survive another wait consuming the park token"
+    );
+}
+
+#[test]
+fn kalshi_provenance_survives_real_decode_and_details_projection() {
+    use metten_engine::sources::Connection;
+    let mut worker = SourceWorker::prepare(
+        &all_source_strategy(),
+        &source_markets(),
+        memory::Memory::default(),
+    )
+    .unwrap();
+    let fence = Fence::new();
+    worker
+        .connection(Provider::Kalshi, worker.tokens()[0], Connection::Open, 0)
+        .unwrap();
+    let frames: &[&[u8]] = &[
+        br#"{"type":"subscribed","msg":{"sid":1,"channel":"orderbook_delta"}}"#,
+        br#"{"type":"orderbook_snapshot","sending_ts_ms":1700000000001,"sid":1,"seq":1,"msg":{"market_ticker":"KXBTC15M-0","clock":7,"yes_dollars_fp":[["0.36","2"]],"no_dollars_fp":[["0.64","3"]]}}"#,
+        br#"{"type":"orderbook_delta","sending_ts_ms":1700000000003,"sid":1,"seq":2,"msg":{"market_ticker":"KXBTC15M-0","clock":8,"ts_ms":1700000000002,"side":"yes","price_dollars":"0.36","delta_fp":"1"}}"#,
+        br#"{"type":"subscribed","msg":{"sid":2,"channel":"trade"}}"#,
+        br#"{"type":"trade","sending_ts_ms":1700000000005,"sid":2,"seq":9007199254740993,"msg":{"market_ticker":"KXBTC15M-0","trade_id":"trade-1","ts_ms":1700000000004,"yes_price_dollars":"0.36","no_price_dollars":"0.64"}}"#,
+        br#"{"type":"subscribed","msg":{"sid":3,"channel":"cfbenchmarks_value"}}"#,
+        br#"{"type":"cfbenchmarks_value_indexlist","sid":3,"seq":1,"msg":{"index_ids":["BRTI"]}}"#,
+        br#"{"type":"cfbenchmarks_value","sending_ts_ms":1700000000008,"sid":3,"seq":2,"msg":{"index_id":"BRTI","received_at":1700000000007,"data":"{\"id\":\"BRTI\",\"time\":1700000000006,\"value\":\"68000.12\"}"}}"#,
+    ];
+    for frame in frames {
+        feed_source(&mut worker, &fence, Provider::Kalshi, frame, 0, None).unwrap();
+    }
+    let view = worker.snapshot(0).unwrap();
+    let details = view.wire_details(0, 0).unwrap();
+    let values = details["values"].as_array().unwrap();
+    let book = values
+        .iter()
+        .find(|v| v["detail"]["kind"] == "book")
+        .unwrap();
+    assert_eq!(book["provider_time_utc"], "1700000000002");
+    assert_eq!(book["detail"]["sending_ts_ms"], "1700000000003");
+    assert_eq!(book["detail"]["sid"], "1");
+    assert_eq!(book["detail"]["sequence"], "2");
+    let trade = values
+        .iter()
+        .find(|v| v["detail"]["kind"] == "trade")
+        .unwrap();
+    assert_eq!(trade["provider_time_utc"], "1700000000004");
+    assert_eq!(trade["detail"]["sending_ts_ms"], "1700000000005");
+    assert_eq!(trade["detail"]["sid"], "2");
+    assert_eq!(trade["detail"]["sequence"], "9007199254740993");
+    let brti = view.wire_details(1, 0).unwrap();
+    let brti = &brti["values"][0];
+    assert_eq!(brti["provider_time_utc"], "1700000000006");
+    assert_eq!(brti["detail"]["received_at"], "1700000000007");
+    assert_eq!(brti["detail"]["sending_ts_ms"], "1700000000008");
+    assert_eq!(brti["detail"]["sid"], "3");
+    assert_eq!(brti["detail"]["sequence"], "2");
+    assert!(
+        view.wire_snapshot(0)["bindings"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|b| b["usable"] == false)
+    );
+}
+
+#[test]
+fn retained_source_projection_reports_expiry_without_inventing_absence() {
+    let (mut worker, fence) = prepared_rollover_worker();
+    worker.lease = Some(2);
+    feed_source(
+        &mut worker,
+        &fence,
+        Provider::Kalshi,
+        book_frame(3, "KXBTC15M-0", r#"[["0.36","1"]]"#, r#"[["0.64","1"]]"#).as_bytes(),
+        1,
+        None,
+    )
+    .unwrap();
+    let view = worker.snapshot(1).unwrap();
+    for (at, usable, reason) in [(1, true, None), (2, false, Some("stale_data"))] {
+        let projected = view.wire_snapshot(at);
+        for binding in projected["bindings"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|b| b["market_id"] == "KXBTC15M-0")
+        {
+            assert_eq!(binding["usable"], usable);
+            assert_eq!(binding["reason"], serde_json::json!(reason));
+            assert!(!binding["value"].is_null());
+        }
+    }
+    assert_eq!(
+        worker.snapshot(2).unwrap().wire_snapshot(2)["bindings"][0]["reason"],
+        "stale_data"
+    );
+    let (mut worker, _fence) = prepared_rollover_worker();
+    let projected = worker.snapshot(0).unwrap().wire_snapshot(900000);
+    for binding in projected["bindings"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|b| b["market_id"] == "KXBTC15M-0")
+    {
+        assert_eq!(binding["usable"], false);
+        assert_eq!(binding["reason"], "market_closed");
+    }
+    assert_eq!(projected["markets"][0]["preparation"], "expired");
+    assert!(projected["current_market"].is_null());
+    use metten_engine::sources::{Scope, Stream, Unavailable};
+    worker
+        .state
+        .invalidate(Scope::Stream(Stream::Book), Unavailable::Gap, 1, None)
+        .unwrap();
+    assert_eq!(
+        worker.snapshot(1).unwrap().wire_snapshot(900000)["bindings"][0]["reason"],
+        "gap"
+    );
+}
+
+#[test]
+fn production_and_isolated_sources_keep_distinct_native_environments() {
+    let production = transport::Transport::new(Environment::Production).unwrap();
+    let isolated = transport::Transport::isolated().unwrap();
+    assert_eq!(production.environment().name(), "production");
+    assert_eq!(
+        production.environment().socket(),
+        "wss://external-api-ws.kalshi.com/trade-api/ws/v2"
+    );
+    assert_eq!(isolated.environment().name(), "demo");
+    assert_ne!(
+        production.environment().account(),
+        isolated.environment().account()
+    );
+    assert!(!production.is_isolated());
+    assert!(isolated.is_isolated());
+}
+
+#[tokio::test]
+async fn socket_intake_waits_within_age_limit_and_remains_cancelable() {
+    use futures_util::SinkExt;
+    for mode in ["drain", "stop", "expire"] {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let peer = tokio::spawn(async move {
+            let (socket, _) = listener.accept().await.unwrap();
+            let mut socket = tokio_tungstenite::accept_async(socket).await.unwrap();
+            for n in 0..=RAW_SLOTS {
+                socket
+                    .send(tokio_tungstenite::tungstenite::Message::Text(
+                        n.to_string().into(),
+                    ))
+                    .await
+                    .unwrap();
+            }
+            futures_util::StreamExt::next(&mut socket).await;
+        });
+        let fence = Fence::new();
+        let connection =
+            transport::local_connection(address, Provider::Coinbase, fence.clone()).await;
+        let transport = Arc::new(transport::Transport::new(Environment::Demo).unwrap());
+        let (_control, mut controls) = mpsc::channel(1);
+        let (tx, mut rx) = intake();
+        let (signal, stop) = watch::channel(false);
+        let source = metten_engine::sources::SourceState::display().unwrap();
+        let tokens = SOURCE_STREAMS.map(|stream| source.token(stream));
+        let running = transport.clone();
+        let task = tokio::spawn(async move {
+            running
+                .serve(connection, &mut controls, tx, tokens, stop, None)
+                .await
+        });
+        tokio::time::timeout(SHUTDOWN, async {
+            while transport.counters(Provider::Coinbase).unwrap()[4] < (RAW_SLOTS + 1) as u64 {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .unwrap();
+        assert!(
+            !task.is_finished(),
+            "full intake must wait within the existing age limit"
+        );
+        if mode == "drain" {
+            for n in 0..=RAW_SLOTS {
+                let item = tokio::time::timeout(SHUTDOWN, rx.recv())
+                    .await
+                    .unwrap()
+                    .unwrap();
+                assert_eq!(item.bytes.as_slice(), n.to_string().as_bytes());
+            }
+        }
+        if mode != "expire" {
+            signal.send_replace(true);
+        }
+        let result = tokio::time::timeout(SHUTDOWN, task).await.unwrap().unwrap();
+        assert_eq!(
+            result,
+            Err(if mode == "expire" {
+                Failure::Deadline
+            } else {
+                Failure::Stopped
+            })
+        );
+        assert!(!fence.current(fence.token()));
+        peer.await.unwrap();
+    }
 }

@@ -59,8 +59,16 @@ When moving an entry point or adding a maintained boundary, update its route her
 
 ## Step-5 source setup and verification route
 
+Native production transport (Demo only for isolated verification) chooses both credential item and snapshot environment; the renderer cannot select either.
+
 Named source action → `main.rs:decode_sources/sources`, mutation/read admission and `ProviderOwner` → existing Coordinator/SourceHandle desired membership → sole SourceWorker/SourceState → `SourceView::wire_snapshot/wire_details` → literal frontend Sources section. `SourceState::display` initializes fixed display requirements; saved inspection uses `inspect_source_requirements` and the existing immutable engine detail/validator. No second strategy/source owner exists.
 
 Provider credential action → `decode_provider_credential` → existing fixed-item Credentials/change/with_signer → same source owner; Quit's narrow revocation handle remains available during moved native ownership. See [native contract](../../src-tauri/src/README.md#step-5-source-commands-and-isolated-receiver).
 
 Private source verification → `credential.rs:read_bootstrap/SourceVerifier/observe_sources` → isolated Transport/real decoder/worker completion → ack, with source_mode production refusal and retained exit ownership. See [tool contract](../../scripts/README.md#isolated-sources-walkthrough-step-5), native Unix-socket/owner tests and [Sources UI tests](../../tests/sources.test.mjs). Correctness lint lives in `.oxlintrc.json` plus package scripts and existing Foundation job. Current outcomes/limits remain in [issue5 evidence](../verification/issue-5.md#current-evidence-index).
+
+## Source prototype checks
+
+`providers/tests.rs` exercises actual decoders, source-state transitions, coordinator publication, read-only transport, cancellation, invalidation and joined shutdown. Public `crates/engine/tests/sources.rs` exercises evidence identity and lifecycle meaning through the engine interface. The small intake notification tests cover ordinary arrivals and a consumed park token.
+
+`SourceWorker::refresh_tickers` reads borrowed `SourceState::market_ids`; public source retirement/registration checks retain its functional coverage. There is no native capacity harness, collector, counting allocator or probe callback. Owner deleted those tools rather than carrying them into the issue 5/6 prototype. Issue 16 owns any later performance work; [historical evidence](../verification/issue-5.md#current-evidence-index) records the failed qualification without claiming a supported envelope.

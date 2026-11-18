@@ -253,12 +253,15 @@ impl Trades {
 #[derive(Clone)]
 pub enum Details {
     Book {
+        sending_ts_ms: Option<u64>,
         clock: Option<u64>,
         sid: u64,
         sequence: u64,
         quantities: [Option<Decimal>; 4],
     },
     Trade {
+        sid: Option<u64>,
+        sending_ts_ms: Option<u64>,
         quantity: Option<String>,
         direction: Option<String>,
         role: &'static str,
@@ -266,6 +269,8 @@ pub enum Details {
         block: Option<bool>,
     },
     Brti {
+        sid: u64,
+        sequence: u64,
         received_at: Option<u64>,
         sending_ts_ms: Option<u64>,
         trailing: Option<Average>,

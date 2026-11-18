@@ -53,6 +53,12 @@ pub enum Environment {
     Production,
 }
 impl Environment {
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::Demo => "demo",
+            Self::Production => "production",
+        }
+    }
     pub fn account(self) -> &'static str {
         match self {
             Self::Demo => "kalshi:demo",
@@ -68,7 +74,7 @@ impl Environment {
     fn socket(self) -> &'static str {
         match self {
             Self::Demo => "wss://demo-api.kalshi.co/trade-api/ws/v2",
-            Self::Production => "wss://external-api.kalshi.com/trade-api/ws/v2",
+            Self::Production => "wss://external-api-ws.kalshi.com/trade-api/ws/v2",
         }
     }
 }
@@ -179,7 +185,7 @@ impl Intake {
         }
     }
 }
-// Provisional buffering ceiling, independent of price validity; qualify workload age in step 6.
+// Buffering ceiling is independent of price validity; issue 16 owns later capacity measurement.
 pub const MAX_INTAKE_AGE: Duration = Duration::from_secs(2);
 #[derive(Clone)]
 pub struct Fence {
@@ -493,8 +499,54 @@ impl Coordinator {
         Ok(())
     }
 }
+pub(super) const RAW_SLOTS: usize = 8;
+
 pub fn intake() -> (mpsc::Sender<Intake>, mpsc::Receiver<Intake>) {
-    mpsc::channel(1)
+    mpsc::channel(RAW_SLOTS)
+}
+// The queue wakes its existing owner; no second receiver or source scheduler.
+pub(super) struct IntakeWake {
+    notified: AtomicBool,
+    worker: std::thread::Thread,
+}
+impl Default for IntakeWake {
+    fn default() -> Self {
+        Self {
+            notified: AtomicBool::new(false),
+            worker: std::thread::current(),
+        }
+    }
+}
+impl IntakeWake {
+    pub(super) fn wait(&self, duration: Duration) {
+        // A separate sticky flag survives other waits consuming the thread's park token.
+        if !self.notified.swap(false, Ordering::Acquire) {
+            std::thread::park_timeout(duration);
+        }
+    }
+}
+impl std::task::Wake for IntakeWake {
+    fn wake(self: Arc<Self>) {
+        self.wake_by_ref();
+    }
+    fn wake_by_ref(self: &Arc<Self>) {
+        self.notified.store(true, Ordering::Release);
+        self.worker.unpark();
+    }
+}
+#[cfg(test)]
+pub(super) fn intake_waker() -> std::task::Waker {
+    std::task::Waker::from(Arc::new(IntakeWake::default()))
+}
+pub(super) fn poll_intake(
+    rx: &mut mpsc::Receiver<Intake>,
+    waker: &std::task::Waker,
+) -> Result<Intake, mpsc::error::TryRecvError> {
+    match rx.poll_recv(&mut std::task::Context::from_waker(waker)) {
+        std::task::Poll::Ready(Some(item)) => Ok(item),
+        std::task::Poll::Ready(None) => Err(mpsc::error::TryRecvError::Disconnected),
+        std::task::Poll::Pending => Err(mpsc::error::TryRecvError::Empty),
+    }
 }
 pub fn admit(sender: &mpsc::Sender<Intake>, fence: &Fence, item: Intake) -> Result<(), Failure> {
     if !Arc::ptr_eq(&fence.generation, &item.fence.generation) || !fence.current(item.generation) {

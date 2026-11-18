@@ -216,6 +216,8 @@ function sourcesActive() { return sourcePanel.open && !document.hidden; }
 function renderSources(snapshot: SourceSnapshot) {
   if (snapshot.owner === sourceOwner && BigInt(snapshot.revision) < BigInt(sourceRevision)) return;
   sourceOwner = snapshot.owner; sourceRevision = snapshot.revision;
+  element('source-environment').textContent = `${snapshot.environment === 'production' ? 'Production market data' : 'Demo'} · Read-only`;
+  element('provider-environment').textContent = `${snapshot.environment === 'production' ? 'Production' : 'Demo'} API key. Shared by Kalshi and BRTI. Saving a key does not connect either source.`;
   element('source-markets').textContent = `Current market: ${snapshot.current_market ?? 'not verified'}\n${snapshot.markets.map(m => `${m.market_id} · ${m.preparation}${m.verified ? '' : ' · metadata unverified'}`).join('\n') || 'Next market not ready — checking its information.'}`;
   for (const name of sourceNames) element(`source-${name}-status`).textContent = sourcePresentation(snapshot, name);
 }
@@ -286,7 +288,7 @@ for (const operation of ['status', 'save', 'replace', 'remove'] as const) elemen
   buttons.forEach(button => { button.disabled = true; });
   const status = element('provider-status-text'); status.textContent = 'Checking credential action…';
   const material = operation === 'save' || operation === 'replace' ? { key_id: element<HTMLInputElement>('provider-key-id').value, private_key } : {};
-  void invoke<ProviderCredentialResponse>('provider_credential', { operation, provider: 'kalshi', environment: 'demo', ...material }).then(result => {
+  void invoke<ProviderCredentialResponse>('provider_credential', { operation, provider: 'kalshi', ...material }).then(result => {
     status.textContent = result.kind === 'saved' ? `Saved: ${result.key_id} · ${result.key_type}` : result.kind === 'missing' ? 'Missing credential.' : `Credential ${result.operation} confirmed. Connect explicitly when ready.`;
   }).catch(failure => { status.textContent = sourceFailure(failure); }).finally(() => {
     providerPending = false; buttons.forEach(button => { button.disabled = false; }); queueSourceRead({ operation: 'snapshot' });

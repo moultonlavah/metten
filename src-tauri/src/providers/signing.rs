@@ -20,6 +20,7 @@ impl Key {
         if pem.is_empty() || pem.len() > 16384 {
             return Err(Failure::InvalidCredential);
         }
+        let pem = pem.trim();
         if let Ok(key) = ed25519_dalek::SigningKey::from_pkcs8_pem(pem) {
             return Ok(Self::Ed25519(Box::new(key)));
         }

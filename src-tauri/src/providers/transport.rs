@@ -94,6 +94,9 @@ impl Transport {
         t.isolated = true;
         Ok(t)
     }
+    pub fn environment(&self) -> Environment {
+        self.environment
+    }
     pub fn is_isolated(&self) -> bool {
         self.isolated
     }
@@ -548,10 +551,7 @@ impl Transport {
                                 .data_messages
                                 .checked_add(1)
                                 .ok_or(Failure::Capacity)?;
-                            return Ok(memory::Bytes {
-                                data: text.as_bytes().to_vec(),
-                                _charge: charge,
-                            });
+                            return self.memory.finish_receive(text.as_bytes().to_vec(), charge);
                         }
                         Message::Ping(_) => {
                             let mut permit = self
@@ -580,6 +580,8 @@ pub async fn local_connection(
     provider: Provider,
     fence: Fence,
 ) -> Connection {
+    let memory = memory::Memory::default();
+    let charge = memory.reserve(4 * MAX_BYTES).unwrap();
     let (socket, _) = tokio_tungstenite::connect_async_with_config(
         format!("ws://{address}"),
         Some(config()),
@@ -594,7 +596,7 @@ pub async fn local_connection(
         fence,
         generation,
         retry: Arc::new(std::sync::Mutex::new(budget::Retry::new(1))),
-        _memory: memory::Memory::default().reserve(4 * MAX_BYTES).unwrap(),
+        _memory: charge,
     }
 }
 
@@ -699,26 +701,40 @@ impl Transport {
                     })?;
                 match message {
                     Message::Text(text) => {
-                        let mut budget = self.budgets[provider.index()]
-                            .lock()
-                            .map_err(|_| Failure::Unavailable)?;
-                        budget.data_messages = budget
-                            .data_messages
-                            .checked_add(1)
-                            .ok_or(Failure::Capacity)?;
-                        drop(budget);
+                        {
+                            let mut budget = self.budgets[provider.index()]
+                                .lock()
+                                .map_err(|_| Failure::Unavailable)?;
+                            budget.data_messages = budget
+                                .data_messages
+                                .checked_add(1)
+                                .ok_or(Failure::Capacity)?;
+                        }
                         let mut item = Intake::new(
                             provider,
                             &read_fence,
-                            memory::Bytes {
-                                data: text.as_bytes().to_vec(),
-                                _charge: charge,
-                            },
+                            self.memory
+                                .finish_receive(text.as_bytes().to_vec(), charge)?,
                             Instant::now(),
                         );
                         item.source_tokens = Some(receipt_tokens);
                         item.progress = progress.clone();
-                        admit(&intake, &read_fence, item)?;
+                        if item.bytes.len() > MAX_BYTES {
+                            return Err(Failure::Capacity);
+                        }
+                        let deadline = item.received_at + MAX_INTAKE_AGE;
+                        let permit = read_fence
+                            .run(
+                                deadline,
+                                bounded(&mut read_stop, deadline, async {
+                                    intake.reserve().await.map_err(|_| Failure::Stopped)
+                                }),
+                            )
+                            .await?;
+                        if !read_fence.current(item.generation) {
+                            return Err(Failure::Stopped);
+                        }
+                        permit.send(item);
                     }
                     Message::Ping(_) => {
                         match pong_tx.try_send(()) {

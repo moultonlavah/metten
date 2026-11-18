@@ -89,3 +89,25 @@ test('invalid first data is visible without inventing a received value', () => {
   s.bindings[0].value = '68000.12';
   assert.match(sourcePresentation(s, 'coinbase'), /Invalid source data/);
 });
+
+test('expired data is distinct from awaiting data and unknown freshness', () => {
+  const s = snapshot(); s.sources[2] = { source: 'coinbase', enabled: true, connection: 'open' };
+  s.bindings = [{ source: 'coinbase', field: 'last_trade', value: '68000.12', unit: 'usd_per_btc', market_id: null, side: null, identity: '10', age_ms: '2000', usable: false, history_ready: false, reason: 'stale_data', capabilities: { current: null } }];
+  const text = sourcePresentation(s, 'coinbase');
+  assert.match(text, /68000.12 USD\/BTC/);
+  assert.match(text, /Stale data/);
+  assert.doesNotMatch(text, /Awaiting|Freshness has not been verified/);
+  s.bindings[0].reason = 'market_closed';
+  assert.match(sourcePresentation(s, 'coinbase'), /Market closed/);
+});
+
+test('source environment comes from native state and credential requests cannot select it', async () => {
+  const h = await harness(); h.open();
+  const s = snapshot(); s.environment = 'production';
+  h.calls.shift().resolve(s); await setImmediate();
+  assert.match(h.element('source-environment').textContent, /Production market data.*Read-only/);
+  assert.match(h.element('provider-environment').textContent, /Production API key/);
+  h.element('provider-key-id').value = 'controlled'; h.element('provider-private-key').value = 'controlled';
+  h.click('provider-save');
+  assert.equal(Object.hasOwn(h.calls[0].args, 'environment'), false);
+});

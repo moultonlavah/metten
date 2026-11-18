@@ -110,6 +110,8 @@ impl Kraken {
                             time: Some(t.timestamp.into()),
                             initialize,
                             details: Some(Details::Trade {
+                                sid: None,
+                                sending_ts_ms: None,
                                 quantity: t.qty.map(quantity_text).transpose()?,
                                 direction: t.side.map(str::to_owned),
                                 role: "taker",

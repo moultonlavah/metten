@@ -194,7 +194,8 @@ impl SourceWorker {
             }
         }
         let provider = engine_provider(provider);
-        self.state
+        let effect = self
+            .state
             .apply(source_envelope(
                 at,
                 metten_engine::sources::SourceEvent::Connection {
@@ -203,7 +204,8 @@ impl SourceWorker {
                     state,
                 },
             ))
-            .map_err(|_| Failure::Protocol)
+            .map_err(|_| Failure::Protocol)?;
+        Ok(effect)
     }
     pub fn process(
         &mut self,
@@ -862,9 +864,11 @@ impl SourceWorker {
                 Source::Kraken,
             ][index];
             revoke_gates(&self.gates, streams)?;
-            self.state
+            let effect = self
+                .state
                 .invalidate(Scope::Source(source), Unavailable::Disconnected, at, None)
                 .map_err(|_| Failure::Protocol)?;
+            let _ = effect;
             self.enabled[index] = enabled;
             let provider = match index {
                 0 | 1 => Provider::Kalshi,
@@ -1021,21 +1025,47 @@ impl SourceView {
             });
             let (market, side) = match &b.binding.scope { BindingScope::Underlying => (None, None), BindingScope::Market { market_id } => (Some(market_id), None),
                 BindingScope::Contract { market_id, side, .. } => (Some(market_id), Some(match side { metten_engine::strategy::Side::Yes => "yes", _ => "no" })) };
+            let market_unexpired = market.is_none_or(|id| self.snapshot.markets.iter().any(|m|
+                &m.descriptor.market_id == id && i128::from(now_ms) < i128::from(m.descriptor.close_ms)));
+            let reason = if b.requirement.instrument == "current_market" {
+                Some("unavailable_reference")
+            } else if enabled && self.stream_epoch_current(stream) && failure_reason.is_some() {
+                failure_reason.map(Unavailable::code)
+            } else if !permitted {
+                Some("disconnected")
+            } else if b.reason.is_some_and(|reason| reason != Unavailable::Freshness) {
+                b.reason.map(Unavailable::code)
+            } else if !market_unexpired {
+                Some("market_closed")
+            } else if b.value.is_some()
+                && b.capabilities.current.is_none()
+                && now_ms >= b.valid_until_ms
+            {
+                Some("stale_data")
+            } else {
+                b.reason.map(Unavailable::code)
+            };
             json!({"id":b.binding.binding_id.to_string(), "source":source_name(b.requirement.source),
                 "field":b.requirement.field,"unit":match b.requirement.unit {RuleUnit::ContractCents=>"contract_cents",RuleUnit::UsdPerBtc=>"usd_per_btc",RuleUnit::Percent=>"percent"},
                 "market_id":market,"side":side,"value":b.value.map(|v|v.to_string()),"identity":b.provider_identity,
                 "provider_time_utc":b.provider_time_utc,"age_ms":b.age_ms.map(|age|age.saturating_add(now_ms.saturating_sub(self.snapshot.at_ms)).to_string()),
-                "generation":b.generation.to_string(),"usable":permitted && b.usable && now_ms < b.valid_until_ms,
-                "history_ready":permitted && b.history_ready && b.capabilities.history.is_none(),
-                "reason":if b.requirement.instrument=="current_market" {Some("unavailable_reference")} else if enabled && self.stream_epoch_current(stream) && failure_reason.is_some() { failure_reason.map(Unavailable::code) } else if permitted { b.reason.map(Unavailable::code) } else { Some("disconnected") },
+                "generation":b.generation.to_string(),"usable":permitted && market_unexpired && b.usable && now_ms < b.valid_until_ms,
+                "history_ready":permitted && market_unexpired && b.history_ready && b.capabilities.history.is_none(),
+                "reason":reason,
                 "capabilities":{"current":b.capabilities.current.map(Unavailable::code),"observations":b.capabilities.observations.map(Unavailable::code),"history":b.capabilities.history.map(Unavailable::code)}})
         }).collect();
         let markets:Vec<_> = self.snapshot.markets.iter().map(|m|json!({"market_id":m.descriptor.market_id,"contract_id":m.descriptor.contract_id,
             "series_id":m.descriptor.series_id,"open_ms":m.descriptor.open_ms.to_string(),"close_ms":m.descriptor.close_ms.to_string(),
-            "verified":m.verified && self.stream_current(Stream::Metadata),"preparation":if !self.stream_current(Stream::Book) {"identified"} else {match m.preparation {Preparation::Unknown=>"unknown",Preparation::Identified=>"identified",Preparation::Collecting=>"collecting",Preparation::Ready=>"ready"}}})).collect();
+            "verified":m.verified && self.stream_current(Stream::Metadata),"preparation":if i128::from(now_ms) >= i128::from(m.descriptor.close_ms) {"expired"} else if !self.stream_current(Stream::Book) {"identified"} else {match m.preparation {Preparation::Unknown=>"unknown",Preparation::Identified=>"identified",Preparation::Collecting=>"collecting",Preparation::Ready=>"ready"}}})).collect();
+        let current_market = self.snapshot.current_market.as_ref().filter(|id| {
+            self.snapshot.markets.iter().any(|m| {
+                &m.descriptor.market_id == *id
+                    && i128::from(now_ms) < i128::from(m.descriptor.close_ms)
+            })
+        });
         json!({"kind":"snapshot","owner":self.snapshot.owner.to_string(),"revision":self.snapshot.revision.to_string(),
             "observed_at_utc_ms":(i128::from(self.epoch_utc_ms)+i128::from(self.snapshot.at_ms)).to_string(),
-            "environment":"demo","current_market":self.snapshot.current_market,"markets":markets,"sources":sources,"bindings":bindings})
+            "current_market":current_market,"markets":markets,"sources":sources,"bindings":bindings})
     }
     pub fn wire_details(&self, source: usize, now_ms: u64) -> Result<serde_json::Value, Failure> {
         if source >= 4 {
@@ -1062,23 +1092,28 @@ impl SourceView {
                 if let Ok(Some(detail)) = self.details(stream, market) {
                     let detail = match detail {
                         wire::Details::Book {
+                            sending_ts_ms,
                             clock,
                             sid,
                             sequence,
                             quantities,
                         } => {
-                            json!({"kind":"book","clock":clock.map(|v|v.to_string()),"sid":sid.to_string(),"sequence":sequence.to_string(),"quantity_unit":"contracts","quantities":{"yes_bid":quantities[0].map(|q|q.to_string()),"no_bid":quantities[1].map(|q|q.to_string()),"yes_ask":quantities[2].map(|q|q.to_string()),"no_ask":quantities[3].map(|q|q.to_string())}})
+                            json!({"kind":"book","sending_ts_ms":sending_ts_ms.map(|v|v.to_string()),"clock":clock.map(|v|v.to_string()),"sid":sid.to_string(),"sequence":sequence.to_string(),"quantity_unit":"contracts","quantities":{"yes_bid":quantities[0].map(|q|q.to_string()),"no_bid":quantities[1].map(|q|q.to_string()),"yes_ask":quantities[2].map(|q|q.to_string()),"no_ask":quantities[3].map(|q|q.to_string())}})
                         }
                         wire::Details::Trade {
+                            sid,
+                            sending_ts_ms,
                             quantity,
                             direction,
                             role,
                             sequence,
                             block,
                         } => {
-                            json!({"kind":"trade","quantity_unit":if source==0 {"contracts"}else{"btc"},"quantity":quantity,"direction":direction,"role":role,"sequence":sequence.map(|v|v.to_string()),"block":block})
+                            json!({"kind":"trade","sid":sid.map(|v|v.to_string()),"sending_ts_ms":sending_ts_ms.map(|v|v.to_string()),"quantity_unit":if source==0 {"contracts"}else{"btc"},"quantity":quantity,"direction":direction,"role":role,"sequence":sequence.map(|v|v.to_string()),"block":block})
                         }
                         wire::Details::Brti {
+                            sid,
+                            sequence,
                             received_at,
                             sending_ts_ms,
                             trailing,
@@ -1087,7 +1122,7 @@ impl SourceView {
                             let average = |a: &Option<wire::Average>| {
                                 a.as_ref().map(|a|json!({"value":a.value,"unit":"usd_per_btc","count":a.count.to_string(),"start":a.start.map(|v|v.to_string()),"end_exclusive":a.end_exclusive.map(|v|v.to_string()),"reference_usable":false}))
                             };
-                            json!({"kind":"brti","received_at":received_at.map(|v|v.to_string()),"sending_ts_ms":sending_ts_ms.map(|v|v.to_string()),"trailing":average(trailing),"provisional_final_minute":average(final_minute)})
+                            json!({"kind":"brti","sid":sid.to_string(),"sequence":sequence.to_string(),"received_at":received_at.map(|v|v.to_string()),"sending_ts_ms":sending_ts_ms.map(|v|v.to_string()),"trailing":average(trailing),"provisional_final_minute":average(final_minute)})
                         }
                     };
                     let binding = self.snapshot.bindings.iter().find(|b| {
@@ -1186,9 +1221,11 @@ impl SourceWorker {
         let Some(loss) = pending else { return Ok(()) };
         revoke_gates(&self.gates, &MARKET_STREAMS)?;
         self.kalshi.discard_book();
-        self.state
+        let effect = self
+            .state
             .invalidate(metten_engine::sources::Scope::Market, loss.reason, at, None)
             .map_err(|_| Failure::Protocol)?;
+        let _ = effect;
         if let Some(epoch) = loss.epoch {
             self.epoch_utc_ms = epoch;
         }
@@ -1471,7 +1508,11 @@ impl Coordinator {
         let lifetime = WorkerLifetime(self.stop.clone());
         self.worker = Some(std::thread::spawn(move || {
             let _lifetime = lifetime;
+            let idle = Arc::new(IntakeWake::default());
+            let waker = std::task::Waker::from(idle.clone());
             while !*stop.borrow() {
+                // Claim the existing processing slot before clock/control work; decoding still follows all checks.
+                let received = poll_intake(&mut rx, &waker);
                 let mut at = match u64::try_from(epoch.elapsed().as_millis()) {
                     Ok(at) => at,
                     Err(_) => return,
@@ -1585,8 +1626,10 @@ impl Coordinator {
                     }
                 }
                 let mut dispatched = None;
-                match rx.try_recv() {
+                let mut processed = false;
+                match received {
                     Ok(mut item) => {
+                        processed = true;
                         dispatched = item.completion.take();
                         at = at.max(u64::try_from(epoch.elapsed().as_millis()).unwrap_or(u64::MAX));
                         if source.observe_schedule_loss(at).is_err()
@@ -1618,11 +1661,14 @@ impl Coordinator {
                     Err(Failure::Stopped) if source.schedule.borrow().is_some() => (),
                     Err(_) => return,
                 }
-                std::thread::sleep(Duration::from_millis(5));
+                if !processed {
+                    idle.wait(Duration::from_micros(1500));
+                }
             }
-            let _ = source
+            let stopped = source
                 .state
                 .stop(u64::try_from(epoch.elapsed().as_millis()).unwrap_or(u64::MAX));
+            let _ = stopped;
         }));
         Ok(SourceHandle {
             desired,
@@ -1659,6 +1705,9 @@ impl SourceWorker {
                 .any(|m| i128::from(m.close_ms) <= i128::from(at))
         {
             return Err(Failure::Stopped);
+        }
+        if markets.is_empty() {
+            self.state.snapshot(at).map_err(|_| Failure::Protocol)?;
         }
         for descriptor in markets {
             let before = self.state.snapshot(at).map_err(|_| Failure::Protocol)?;
@@ -1777,7 +1826,7 @@ impl SourceWorker {
                     .map_err(|_| Failure::Protocol)?,
             )?;
         }
-        self.refresh_tickers(at)?;
+        self.refresh_tickers()?;
         if let Some(progress) = &self.progress {
             progress.send_modify(|p| {
                 p.tokens[Stream::Metadata as usize] = Some(self.state.token(Stream::Metadata))
@@ -1822,16 +1871,16 @@ impl SourceWorker {
         }
         Ok(())
     }
-    fn refresh_tickers(&mut self, at: u64) -> Result<(), Failure> {
+    fn refresh_tickers(&mut self) -> Result<(), Failure> {
         use metten_engine::{sources::Stream, strategy::Source};
-        let tickers: Vec<_> = self
+        if self
             .state
-            .snapshot(at)
-            .map_err(|_| Failure::Protocol)?
-            .markets
-            .into_iter()
-            .map(|m| m.descriptor.market_id)
-            .collect();
+            .market_ids()
+            .eq(self.tickers.iter().map(String::as_str))
+        {
+            return Ok(());
+        }
+        let tickers: Vec<_> = self.state.market_ids().map(str::to_owned).collect();
         let added: Vec<_> = tickers
             .iter()
             .filter(|t| !self.tickers.contains(t))
@@ -1920,11 +1969,12 @@ impl SourceWorker {
                 && i128::from(at) < i128::from(market.descriptor.close_ms)
             {
                 // Never give post-opening readiness or invalidity an earlier source clock.
-                match self.state.snapshot(opening) {
-                    Ok(_) => (),
+                let preparation = match self.state.snapshot(opening) {
+                    Ok(view) => view,
                     Err(error) if error.code == "invalid_request" => continue,
                     Err(_) => return Err(Failure::Protocol),
-                }
+                };
+                drop(preparation);
                 consume(
                     self.state
                         .apply(source_envelope(
@@ -1965,7 +2015,7 @@ impl SourceWorker {
                 .map_err(|_| Failure::Protocol)?,
         )?;
         self.at = at;
-        self.refresh_tickers(at)
+        self.refresh_tickers()
     }
 }
 
@@ -2593,6 +2643,22 @@ fn utc_now_ms() -> Result<i64, Failure> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn empty_market_installation_still_rejects_a_backward_clock() {
+        let strategy = metten_engine::strategy::ValidatedStrategy::parse(include_str!(
+            "../../../examples/learning.json"
+        ))
+        .unwrap();
+        let mut worker = SourceWorker::prepare(&strategy, &[], memory::Memory::default()).unwrap();
+        worker.advance(1, |_| Ok(())).unwrap();
+        let token = worker.tokens()[metten_engine::sources::Stream::Metadata as usize];
+        assert_eq!(
+            worker.install_markets(&[], token, 0, |_| Ok(())),
+            Err(Failure::Protocol)
+        );
+        assert!(worker.install_markets(&[], token, 1, |_| Ok(())).is_ok());
+    }
+
     #[test]
     fn exhausted_native_epoch_permanently_revokes_views_without_wrapping() {
         let strategy = metten_engine::strategy::ValidatedStrategy::parse(include_str!(

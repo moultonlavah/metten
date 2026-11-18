@@ -96,6 +96,8 @@ impl Coinbase {
                         time: Some(time.into()),
                         initialize,
                         details: Some(Details::Trade {
+                            sid: None,
+                            sending_ts_ms: None,
                             quantity: m.size.map(quantity_text).transpose()?,
                             direction: m.side.map(str::to_owned),
                             role: "maker",

@@ -498,9 +498,10 @@ async fn sources(
                 let mut value=match (request,view) {
                     (SourceRequest::Snapshot,Some(view))=>view.wire_snapshot(at),
                     (SourceRequest::Details(index),Some(view))=>view.wire_details(index,at)?,
-                    (SourceRequest::Snapshot,None)=>serde_json::json!({"kind":"snapshot","owner":"0","revision":"0","environment":"demo","observed_at_utc_ms":"0","current_market":null,"markets":[],"bindings":[],"sources":[{"source":"kalshi","connection":"disconnected","enabled":false},{"source":"brti","connection":"disconnected","enabled":false},{"source":"coinbase","connection":"disconnected","enabled":false},{"source":"kraken","connection":"disconnected","enabled":false}]}),
+                    (SourceRequest::Snapshot,None)=>serde_json::json!({"kind":"snapshot","owner":"0","revision":"0","observed_at_utc_ms":"0","current_market":null,"markets":[],"bindings":[],"sources":[{"source":"kalshi","connection":"disconnected","enabled":false},{"source":"brti","connection":"disconnected","enabled":false},{"source":"coinbase","connection":"disconnected","enabled":false},{"source":"kraken","connection":"disconnected","enabled":false}]}),
                     _=>return Err(SourceFailure::new("unavailable")),
                 };
+                if value["kind"] == "snapshot" {value["environment"]=serde_json::json!(workspace.source_transport.environment().name());}
                 value["counters"]=serde_json::Value::Array([providers::Provider::Kalshi,providers::Provider::Coinbase,providers::Provider::Kraken].into_iter().map(|p|{
                     let counts=workspace.source_transport.counters(p)?;
                     Ok::<_,providers::Failure>(serde_json::json!({"provider":match p {providers::Provider::Kalshi=>"kalshi",providers::Provider::Coinbase=>"coinbase",providers::Provider::Kraken=>"kraken"},"rest_attempts":counts[0].to_string(),"handshake_attempts":counts[1].to_string(),"control_writes":counts[2].to_string(),"pong_flush_attempts":counts[3].to_string(),"data_messages":counts[4].to_string(),"slow_retry":workspace.source_transport.slow_retry(p)?}))
@@ -534,7 +535,7 @@ async fn sources(
             }else{
                 if owner.is_stopping(){return Err(SourceFailure::new("still_stopping"))}
                 let material=if index<2&&!owner.active(provider){
-                    match owned.credentials.as_mut().unwrap().with_signer(providers::Environment::Demo,|id,key|Ok((id.to_owned(),key.clone()))) {
+                    match owned.credentials.as_mut().unwrap().with_signer(workspace.source_transport.environment(),|id,key|Ok((id.to_owned(),key.clone()))) {
                         Ok(material)=>Some(material),
                         Err(error)=>{handle.enable_if_current(index,intent)?;handle.show_connection(provider,if error==providers::Failure::Missing {metten_engine::sources::Connection::MissingConfiguration}else{metten_engine::sources::Connection::Disconnected})?;return Err(error.into())}
                     }
@@ -563,20 +564,14 @@ fn decode_provider_credential(
         .unwrap_or("");
     let material = matches!(operation, "save" | "replace");
     let keys = if material {
-        vec![
-            "operation",
-            "provider",
-            "environment",
-            "key_id",
-            "private_key",
-        ]
+        vec!["operation", "provider", "key_id", "private_key"]
     } else if matches!(operation, "status" | "remove") {
-        vec!["operation", "provider", "environment"]
+        vec!["operation", "provider"]
     } else {
         return Err(SourceFailure::new("invalid_request"));
     };
     let object = source_object(body, &keys)?;
-    if object["provider"] != "kalshi" || object["environment"] != "demo" {
+    if object["provider"] != "kalshi" {
         return Err(SourceFailure::new("invalid_request"));
     }
     #[cfg(target_os = "macos")]
@@ -620,7 +615,7 @@ async fn provider_credential(
             }
             let credentials = owned.credentials.as_mut().unwrap();
             let value = if operation == "status" {
-                match credentials.status(providers::Environment::Demo)? {
+                match credentials.status(workspace.source_transport.environment())? {
                     provider_credential::Status::Missing => serde_json::json!({"kind":"missing"}),
                     provider_credential::Status::Saved { key_id, key_type } => {
                         serde_json::json!({"kind":"saved","key_id":key_id,"key_type":key_type})
@@ -636,7 +631,7 @@ async fn provider_credential(
                     let _ = providers::signing::Key::parse(key)?;
                 }
                 let outcome = credentials.change(
-                    providers::Environment::Demo,
+                    workspace.source_transport.environment(),
                     mutation,
                     material
                         .as_ref()
@@ -858,7 +853,7 @@ fn main() {
             }else{(provider_credential::native::Keychain::local(),None)};
             let coordinator=providers::Coordinator::new();
             let revocation=coordinator.revocation();
-            app.manage(Workspace { engine, #[cfg(target_os = "macos")] credentials: if source_mode { credential::Credentials::disabled() } else { credential::Credentials::setup() }, #[cfg(target_os = "macos")] providers: std::sync::Mutex::new(Some(coordinator)), #[cfg(target_os = "macos")] provider_credentials: std::sync::Mutex::new(Some(provider_credential::Credentials::new(provider_store))), source_handle: std::sync::Mutex::new(None), source_transport: std::sync::Arc::new((if source_mode {providers::transport::Transport::isolated()}else{providers::transport::Transport::new(providers::Environment::Demo)}).map_err(|_| "Cannot prepare source transport")?), source_revocation: std::sync::Mutex::new(revocation), source_verifier: std::sync::Mutex::new(None), provider_operation: std::sync::Arc::new(StrategyAdmission::default()), source_read: std::sync::Arc::new(StrategyAdmission::default()), source_allowed: source_mode || std::env::var_os("METTEN_VERIFY_FD").is_none(), strategy_operation: std::sync::Arc::new(StrategyAdmission::default()), quitting: AtomicBool::new(false), exit_ready: AtomicBool::new(false), quit_error: std::sync::Mutex::new(None) });
+            app.manage(Workspace { engine, #[cfg(target_os = "macos")] credentials: if source_mode { credential::Credentials::disabled() } else { credential::Credentials::setup() }, #[cfg(target_os = "macos")] providers: std::sync::Mutex::new(Some(coordinator)), #[cfg(target_os = "macos")] provider_credentials: std::sync::Mutex::new(Some(provider_credential::Credentials::new(provider_store))), source_handle: std::sync::Mutex::new(None), source_transport: std::sync::Arc::new((if source_mode {providers::transport::Transport::isolated()}else{providers::transport::Transport::new(providers::Environment::Production)}).map_err(|_| "Cannot prepare source transport")?), source_revocation: std::sync::Mutex::new(revocation), source_verifier: std::sync::Mutex::new(None), provider_operation: std::sync::Arc::new(StrategyAdmission::default()), source_read: std::sync::Arc::new(StrategyAdmission::default()), source_allowed: source_mode || std::env::var_os("METTEN_VERIFY_FD").is_none(), strategy_operation: std::sync::Arc::new(StrategyAdmission::default()), quitting: AtomicBool::new(false), exit_ready: AtomicBool::new(false), quit_error: std::sync::Mutex::new(None) });
             {
                 let workspace = app.state::<Workspace>();
                 *workspace.source_revocation.lock().expect("source revocation poisoned") = workspace.providers.lock().expect("provider owner poisoned").as_ref().expect("source owner").revocation();
@@ -1062,9 +1057,9 @@ mod permissions_tests {
         for value in [
             json!({"operation":"status","provider":"coinbase","environment":"demo"}),
             json!({"operation":"status","provider":"kalshi","environment":"production"}),
-            json!({"operation":"remove","provider":"kalshi","environment":"demo","private_key":"private-marker"}),
-            json!({"operation":"save","provider":"kalshi","environment":"demo","key_id":"x","private_key":"x".repeat(16385)}),
-            json!({"operation":"replace","provider":"kalshi","environment":"demo","key_id":"bad\n","private_key":"private-marker"}),
+            json!({"operation":"remove","provider":"kalshi","private_key":"private-marker"}),
+            json!({"operation":"save","provider":"kalshi","key_id":"x","private_key":"x".repeat(16385)}),
+            json!({"operation":"replace","provider":"kalshi","key_id":"bad\n","private_key":"private-marker"}),
         ] {
             let error = super::decode_provider_credential(&InvokeBody::Json(value)).unwrap_err();
             assert!(
@@ -1075,7 +1070,7 @@ mod permissions_tests {
         }
         assert!(
             super::decode_provider_credential(&InvokeBody::Json(
-                json!({"operation":"status","provider":"kalshi","environment":"demo"})
+                json!({"operation":"status","provider":"kalshi"})
             ))
             .is_ok()
         );

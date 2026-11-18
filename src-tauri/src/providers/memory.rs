@@ -26,6 +26,24 @@ impl Memory {
     pub fn used(&self) -> usize {
         ADAPTER_BYTES - self.0.available_permits()
     }
+    pub(super) fn finish_receive(
+        &self,
+        data: Vec<u8>,
+        mut charge: OwnedSemaphorePermit,
+    ) -> Result<Bytes, Failure> {
+        if !Arc::ptr_eq(&self.0, charge.semaphore()) {
+            return Err(Failure::InvalidRequest);
+        }
+        let spare = charge
+            .num_permits()
+            .checked_sub(data.capacity())
+            .ok_or(Failure::Capacity)?;
+        drop(charge.split(spare).ok_or(Failure::Capacity)?);
+        Ok(Bytes {
+            data,
+            _charge: charge,
+        })
+    }
     pub fn copy(&self, bytes: &[u8]) -> Result<Bytes, Failure> {
         let charge = self.reserve(bytes.len())?;
         Ok(Bytes {

@@ -1,7 +1,7 @@
 <!doctype html>
 <html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Metten</title></head>
 <body><main>
-<header class="app-header"><img class="brand-lockup" src="/assets/brand/exports/svg/metten-a-lockup-primary.svg" alt="Metten" width="256" height="57"><p class="environment">Demo <span aria-hidden="true">·</span> Read-only</p></header>
+<header class="app-header"><img class="brand-lockup" src="/assets/brand/exports/svg/metten-a-lockup-primary.svg" alt="Metten" width="256" height="57"><p class="environment" id="source-environment">Checking source environment · Read-only</p></header>
 
 <section aria-labelledby="source-data-title"><h1 id="source-data-title">Sources</h1><p class="section-intro">Connect the exact sources your strategy names.</p>
 <details id="sources-panel" open><summary>Connections and received data</summary>
@@ -12,7 +12,7 @@
 <div class="source-row"><div class="source-facts"><h2>Coinbase</h2><p id="source-coinbase-status">Disconnected</p></div><div class="controls source-controls"><button class="primary" id="source-coinbase-connect" aria-label="Connect Coinbase">Connect</button><button id="source-coinbase-disconnect" aria-label="Disconnect Coinbase">Disconnect</button><button class="text-button" id="source-coinbase-details" aria-label="View Coinbase details">Details</button></div></div>
 <div class="source-row"><div class="source-facts"><h2>Kraken</h2><p id="source-kraken-status">Disconnected</p></div><div class="controls source-controls"><button class="primary" id="source-kraken-connect" aria-label="Connect Kraken">Connect</button><button id="source-kraken-disconnect" aria-label="Disconnect Kraken">Disconnect</button><button class="text-button" id="source-kraken-details" aria-label="View Kraken details">Details</button></div></div>
 <pre id="source-details" aria-label="Source details"></pre>
-<details class="source-setting" id="provider-panel"><summary>Kalshi credentials</summary><p>Shared by Kalshi and BRTI. Saving a key does not connect either source.</p>
+<details class="source-setting" id="provider-panel"><summary>Kalshi credentials</summary><p id="provider-environment">API credentials stay in Mac Keychain. Saving a key does not connect a source.</p>
 <label for="provider-key-id">Key ID</label><input id="provider-key-id" autocomplete="off" maxlength="128">
 <label for="provider-private-key">Private key (PEM, maximum 16 KiB)</label><textarea id="provider-private-key" rows="4" autocomplete="off" spellcheck="false"></textarea>
 <div class="controls"><button id="provider-status">Check credential status</button><button id="provider-save">Save Kalshi credential</button><button id="provider-replace">Replace Kalshi credential</button><button id="provider-remove">Remove Kalshi credential</button></div><p id="provider-status-text" role="status">Credential status not read.</p>

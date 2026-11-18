@@ -128,7 +128,9 @@ impl Kalshi {
             "orderbook_snapshot" | "orderbook_delta" => Some(Stream::Book),
             "trade" => Some(Stream::Trades),
             "cfbenchmarks_value" | "cfbenchmarks_value_indexlist" => Some(Stream::Brti),
-            "market_lifecycle_v2" => Some(Stream::Metadata),
+            "market_lifecycle_v2" | "event_lifecycle" | "event_fee_update" => {
+                Some(Stream::Metadata)
+            }
             _ => None,
         }
     }
@@ -281,6 +283,64 @@ impl Kalshi {
                 emit(Event::Absent(Stream::Brti))
             };
         }
+        if m.kind == "event_lifecycle" {
+            #[derive(Deserialize)]
+            struct Created<'a> {
+                event_ticker: &'a str,
+                series_ticker: &'a str,
+                collateral_return_type: &'a str,
+                #[serde(rename = "exchange_index")]
+                _exchange_index: i32,
+                #[serde(rename = "title")]
+                _title: String,
+                #[serde(rename = "subtitle")]
+                _subtitle: String,
+                #[serde(rename = "strike_date")]
+                _strike_date: Option<i64>,
+                #[serde(rename = "strike_period")]
+                _strike_period: Option<String>,
+            }
+            let event: Created<'_> = decode(m.msg.ok_or(Failure::Protocol)?.get().as_bytes())?;
+            identity(event.event_ticker)?;
+            identity(event.series_ticker)?;
+            if !matches!(event.collateral_return_type, "" | "MECNET" | "DIRECNET") {
+                return Err(Failure::Protocol);
+            }
+            // Creation does not change retained market metadata; bounded discovery finds successors.
+            return emit(Event::Heartbeat);
+        }
+        if m.kind == "event_fee_update" {
+            #[derive(Deserialize)]
+            struct Fees<'a> {
+                event_ticker: &'a str,
+                #[serde(borrow)]
+                fee_type_override: &'a RawValue,
+                #[serde(borrow)]
+                fee_multiplier_override: &'a RawValue,
+            }
+            let event: Fees<'_> = decode(m.msg.ok_or(Failure::Protocol)?.get().as_bytes())?;
+            identity(event.event_ticker)?;
+            let kind: Option<&str> = serde_json::from_str(event.fee_type_override.get())
+                .map_err(|_| Failure::Protocol)?;
+            if !matches!(
+                kind,
+                None | Some(
+                    "quadratic"
+                        | "quadratic_with_maker_fees"
+                        | "quadratic_with_combo_maker_fees"
+                        | "flat"
+                        | "margin_market_maker_program_fees"
+                )
+            ) || serde_json::from_str::<Option<serde_json::Number>>(
+                event.fee_multiplier_override.get(),
+            )
+            .is_err()
+            {
+                return Err(Failure::Protocol);
+            }
+            // The read-only slice does not calculate fees or authorize purchases.
+            return emit(Event::Heartbeat);
+        }
         let p: Payload<'_> = decode(m.msg.ok_or(Failure::Protocol)?.get().as_bytes())?;
         match m.kind {
             "orderbook_snapshot" | "orderbook_delta" => {
@@ -294,8 +354,12 @@ impl Kalshi {
                         return Err(Failure::Capacity);
                     }
                     let charge = self.memory.reserve(BOOK_BYTES)?;
-                    let yes = levels(p.yes_dollars_fp.ok_or(Failure::Protocol)?)?;
-                    let no = levels(p.no_dollars_fp.ok_or(Failure::Protocol)?)?;
+                    let yes = p
+                        .yes_dollars_fp
+                        .map(levels)
+                        .transpose()?
+                        .unwrap_or_default();
+                    let no = p.no_dollars_fp.map(levels).transpose()?.unwrap_or_default();
                     self.books.insert(
                         ticker.into(),
                         Book {
@@ -356,9 +420,10 @@ impl Kalshi {
                     market: Some(ticker.into()),
                     readings,
                     identity: format!("{}:{}", m.sid.unwrap(), m.seq.unwrap()),
-                    time: None,
+                    time: p.ts_ms.map(|t| t.to_string()),
                     initialize: m.kind == "orderbook_snapshot",
                     details: Some(Details::Book {
+                        sending_ts_ms: m.sending_ts_ms,
                         clock: p.clock,
                         sid: m.sid.unwrap(),
                         sequence: m.seq.unwrap(),
@@ -399,8 +464,11 @@ impl Kalshi {
                         Err(Failure::Protocol)
                     };
                 }
-                let charge = self.memory.reserve(id.len() + 2048)?;
                 let initial = ledger.is_empty();
+                // First permit covers the root; later permits cover min-five-key node growth.
+                let charge = self
+                    .memory
+                    .reserve(id.len() + if initial { 2048 } else { 256 })?;
                 ledger.insert(id.into(), (yes.millionths(), no.millionths(), charge));
                 emit(Event::Prices(Prices {
                     stream: Stream::Trades,
@@ -421,6 +489,8 @@ impl Kalshi {
                     time: p.ts_ms.map(|t| t.to_string()),
                     initialize: initial,
                     details: Some(Details::Trade {
+                        sid: m.sid,
+                        sending_ts_ms: m.sending_ts_ms,
                         quantity: p.count_fp.map(quantity_text).transpose()?,
                         direction: p.taker_side.map(str::to_owned),
                         role: "taker",
@@ -457,6 +527,8 @@ impl Kalshi {
                         time: Some(tick.time.to_string()),
                         initialize,
                         details: Some(Details::Brti {
+                            sid: m.sid.unwrap(),
+                            sequence: m.seq.unwrap(),
                             received_at: p.received_at,
                             sending_ts_ms: m.sending_ts_ms,
                             trailing: average(p.avg_60s_data)?,
@@ -495,6 +567,89 @@ fn levels(raw: &RawValue) -> Result<BTreeMap<i128, i128>, Failure> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn global_lifecycle_variants_validate_and_share_one_sequence() {
+        let mut adapter = Kalshi::new(Memory::default());
+        adapter
+            .decode(
+                br#"{"type":"subscribed","msg":{"sid":1,"channel":"market_lifecycle_v2"}}"#,
+                &[],
+                |_| Ok(()),
+            )
+            .unwrap();
+        for bytes in [
+            br#"{"type":"event_lifecycle","sid":1,"seq":1,"msg":{"event_ticker":"OTHER-EVENT","exchange_index":0,"title":"Created \"quoted\"","subtitle":"Details","collateral_return_type":"MECNET","series_ticker":"OTHER"}}"#.as_slice(),
+            br#"{"type":"event_fee_update","sid":1,"seq":2,"msg":{"event_ticker":"OTHER-EVENT","fee_type_override":null,"fee_multiplier_override":null}}"#,
+        ] {
+            let mut heartbeat = false;
+            adapter.decode(bytes, &[], |event| {heartbeat=matches!(event, Event::Heartbeat); Ok(())}).unwrap();
+            assert!(heartbeat);
+        }
+        let mut changed = false;
+        adapter.decode(br#"{"type":"market_lifecycle_v2","sid":1,"seq":3,"msg":{"market_ticker":"KXBTC15M-M"}}"#, &["KXBTC15M-M".into()], |event| {changed=matches!(event,Event::MetadataChanged);Ok(())}).unwrap();
+        assert!(changed);
+        for payload in [
+            r#"{"event_ticker":"OTHER-EVENT"}"#,
+            r#"{"event_ticker":"OTHER-EVENT","fee_type_override":"invented","fee_multiplier_override":1}"#,
+            r#"{"event_ticker":"OTHER-EVENT","fee_type_override":null,"fee_multiplier_override":"1"}"#,
+        ] {
+            let mut adapter = Kalshi::new(Memory::default());
+            adapter
+                .decode(
+                    br#"{"type":"subscribed","msg":{"sid":1,"channel":"market_lifecycle_v2"}}"#,
+                    &[],
+                    |_| Ok(()),
+                )
+                .unwrap();
+            let bytes = format!(r#"{{"type":"event_fee_update","sid":1,"seq":1,"msg":{payload}}}"#);
+            assert!(adapter.decode(bytes.as_bytes(), &[], |_| Ok(())).is_err());
+        }
+    }
+    #[test]
+    fn omitted_snapshot_sides_replace_old_liquidity_without_zero_prices() {
+        let mut adapter = Kalshi::new(Memory::default());
+        let tickers = ["KXBTC15M-M".into()];
+        adapter
+            .decode(
+                br#"{"type":"subscribed","msg":{"sid":1,"channel":"orderbook_delta"}}"#,
+                &tickers,
+                |_| Ok(()),
+            )
+            .unwrap();
+        for (index, (sides, expected)) in [
+            (
+                r#", "yes_dollars_fp":[["0.36","2"]],"no_dollars_fp":[["0.64","3"]]"#,
+                [true, true, true, true],
+            ),
+            (
+                r#", "yes_dollars_fp":[["0.36","2"]]"#,
+                [true, false, false, true],
+            ),
+            (
+                r#", "no_dollars_fp":[["0.64","3"]]"#,
+                [false, true, true, false],
+            ),
+            ("", [false, false, false, false]),
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            let seq = index + 1;
+            let bytes = format!(
+                r#"{{"type":"orderbook_snapshot","sid":1,"seq":{seq},"msg":{{"market_ticker":"KXBTC15M-M"{sides}}}}}"#
+            );
+            let mut actual = Vec::new();
+            adapter
+                .decode(bytes.as_bytes(), &tickers, |event| {
+                    if let Event::Prices(p) = event {
+                        actual = p.readings.iter().map(|r| r.value.is_some()).collect();
+                    }
+                    Ok(())
+                })
+                .unwrap();
+            assert_eq!(actual, expected);
+        }
+    }
     #[test]
     fn books_are_replaced_and_shared_gap_discards_both() {
         let memory = Memory::default();

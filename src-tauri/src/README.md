@@ -127,7 +127,7 @@ mutation. Do not invoke this blocking interface under a shared lock or on an asy
 runtime thread. Step-5 command admission is described below.
 
 [providers/mod.rs](providers/mod.rs) owns three fixed provider task slots, one
-optional worker, a single-slot raw intake queue, independent generation fences
+optional worker, a eight-slot raw intake queue, independent generation fences
 and a stop signal outside the queue. Consumers must recheck the relevant fence
 before publication. Step 4 adds the read-only source owner described below; no production financial run is connected.
 The worker consumer must perform bounded work; a nonresponsive worker retains
@@ -140,7 +140,7 @@ are absent. Redirects, proxies and library HTTP retries are disabled. The local
 loopback connector exists only under cfg(test). Interrupted send/receive drops
 the socket and revokes its fence; it cannot resume partial protocol work.
 [signing.rs](providers/signing.rs) parses Ed25519 PKCS#8 and 2048-bit RSA
-PKCS#1/PKCS#8, with canonical GET/path/timestamp signatures. No secret types
+PKCS#1/PKCS#8, accepting surrounding pasted whitespace within the original16KiB input limit, with canonical GET/path/timestamp signatures. No secret types
 implement serialization or Debug for transport/status output.
 
 [budget.rs](providers/budget.rs) limits each provider's local traffic: REST
@@ -174,7 +174,7 @@ Worker messages retain their own fence, so explicit provider recovery cannot lea
 the worker consulting an obsolete fence.
 
 Messages, frames and REST bodies are capped at 1 MiB. The three task slots,
-one-slot queue, one worker and finite socket buffers bound transport ownership;
+eight-slot queue, one worker and finite socket buffers bound transport ownership;
 this is not the step-6 simultaneous-allocation or throughput qualification.
 Transport calls require an absolute deadline that includes permit wait and I/O.
 Those deadlines confer no price-validity/history capability. Native Quit takes
@@ -270,6 +270,8 @@ usable interval without counting a transient failure. Ping wakeups coalesce whil
 the library owns the pending automatic pong, independently of subscription permits.
 The keepalive counter counts explicit flush attempts, not every automatic wire pong.
 Network deadlines grant neither price validity nor history.
+The socket reader holds at most one charged received frame while waiting for an existing raw slot, bounded by the original receipt plus the unchanged two-second intake-age limit. Stop/revocation cancels that wait and the original captured tokens/receipt are retained; expiry closes/revokes rather than dropping a required frame. The queue remains eight slots and the shared32MiB allowance is unchanged. Direct nonwaiting admission retains its full-queue refusal behavior.
+
 
 [discovery.rs](providers/discovery.rs) orchestrates only the fixed public metadata
 routes; charged route/token/epoch receipts are parsed on the source worker.
@@ -304,7 +306,7 @@ callers supply the actual completed frontier, drain one effect before another,
 check the full dependency stamp and transport permissions immediately before use,
 and follow the engine's rejection/Busy/Stop protocol. Worker/view invalidity has
 priority even with a full ordinary queue. `snapshot()` and scoped `details()`
-recheck retained permissions; neither performs I/O. Details for book/trades require
+recheck retained permissions; neither performs I/O. Wire projection also rechecks the supplied current clock against each binding's validity deadline and market close. Expired verified data reports `stale_data`; a closed market reports `market_closed` and expired preparation. Both retain last values without granting usability; closed-market history readiness is false and it is no longer advertised as current. Missing data and unknown freshness remain distinct. Details for book/trades require
 the exact market identity and retire with its slot. A retained snapshot is a point-
 in-time fact; current permission alone grants no ongoing price freshness.
 
@@ -333,7 +335,7 @@ financial outcome or production performance is established.
 
 `main.rs:sources` admits exact `snapshot`, `details`, `inspect`, `connect` and
 `disconnect` objects. `provider_credential` admits only Kalshi status/save/replace/
-remove in the native-selected Demo environment. Unknown/extra fields, raw bodies,
+remove in the native-selected environment: production for ordinary source setup and Demo for the isolated walkthrough. The renderer cannot select an environment or credential item. Unknown/extra fields, raw bodies,
 invalid decimal-string IDs and oversized material return finite sanitized errors.
 The bounded counting writer enforces 256-KiB request/output ceilings without an
 oversized serialized clone. `SourceResponse` retains its response reservation
@@ -400,3 +402,25 @@ U1–U7. Controlled data does not establish real access, rights or production ca
 Normal dummy verification (including invalid inherited setup) refuses the new provider/source mutation commands. Only a validated sources walkthrough enables its controlled source path; invalid source-mode startup exits. This prevents the newly added interface from reaching ordinary provider credentials or public feeds during an old dummy walkthrough.
 
 Disconnect revokes the logical gates before mutation admission, so it can cancel a Connect blocked in native credential access even if cleanup reports Busy. Connect retains the request's intent revision and cannot revive a superseded request. The fixed desired watch record carries checked revocation revisions as well as final membership; the worker applies every new revocation even when an off/on pair coalesces to the same final Boolean. This prevents watch coalescing from restoring old source permission. The UI allows Disconnect during pending Connect and suppresses older action feedback.
+
+<a id="offline-source-calibration-step-6"></a>
+
+## Prototype verification and retired capacity tooling
+
+Use the ordinary native provider tests and public engine source/evaluator tests for real product behavior: source identity/units, observations versus replay, snapshot/delta state, invalidation, scoped membership, read-only routes, cancellation, publication and joined shutdown. Controlled timestamps and the existing lease/receipt fixtures remain test inputs; they establish no upstream freshness or real-provider guarantee.
+
+Capacity campaigns, collector diagnostics, histogram/reporting infrastructure, process probes, counting allocator and worker probe callbacks have been deleted by owner direction. No optional performance entry remains to run while completing issues 5 or 6. Issue 16 owns any later measurements based on the integrated application's actual requirements. Historical failures are preserved in [issue-5 evidence](../../docs/verification/issue-5.md#current-evidence-index); they are not prototype prerequisites or a qualified-capacity claim.
+
+
+### Kalshi provenance in source details
+
+Book deltas retain `msg.ts_ms` as provider event time; book snapshots do not invent an event time when it is absent. Book, trade and BRTI details retain `sending_ts_ms` separately as the provider's network-queue time. All three preserve `sid` and `sequence` in details, encoded as decimal strings. Trade/BRTI event times, BRTI `received_at`, local receipt age and connection generations remain separate facts. Coinbase/Kraken have no Kalshi subscription ID or network-queue timestamp; those detail fields are null.
+
+`kalshi_provenance_survives_real_decode_and_details_projection` uses the real decoder, SourceState and wire-details projection, including a sequence above JavaScript's exact integer range. This preserves provenance without granting strategy freshness or history. The added optional scalars introduce no collection, task or raw-history retention; the existing bounded detail/view reservations and serialized-output limit still apply.
+
+
+### Production source setup
+
+Ordinary startup uses the existing production read-only transport and fixed `kalshi:production` Keychain item; isolated source verification remains Demo and cannot reach production. The transport determines the environment in source snapshots and credential operations. The native credential command accepts only provider/operation/material, rejecting renderer environment selectors. The Sources header and credential help display the native environment. Reopening remains disconnected and saving a key never connects. Production means real market data, not enabled trading: account/portfolio/order routes remain absent.
+
+The Kalshi adapter consumes documented `event_lifecycle` and `event_fee_update` messages on the global lifecycle subscription, preserving the shared sid/sequence and bounded typed validation before ignoring creation/fee details unused by this read-only slice. Event creation does not change retained exact-market metadata; bounded discovery still prepares successors. Snapshots with an omitted/empty side replace that side with no liquidity, never zero price or a retained old ask. Actual production receipt and the focused regressions are recorded in [issue5 evidence](../../docs/verification/issue-5.md#authorized-production-market-data-intake).
