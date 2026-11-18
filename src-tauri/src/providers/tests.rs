@@ -1843,6 +1843,14 @@ fn shared_book_gap_revokes_both_and_stale_completion_cannot_restore_either_or_br
     )
     .unwrap();
     let old = worker.snapshot(3).unwrap();
+    assert!(
+        old.wire_snapshot(3)["bindings"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|b| b["source"] == "brti")
+            .all(|b| b["reason"] == "invalid_value")
+    );
     assert_eq!(
         feed_source(&mut worker, &fence, Provider::Kalshi, b"{", 4, None),
         Err(Failure::Protocol)
@@ -3193,58 +3201,201 @@ fn logical_kalshi_retirement_preserves_brti_and_releases_old_subscription_ids() 
     use metten_engine::sources::{Connection, Stream};
     let memory = memory::Memory::default();
     let mut worker =
-        SourceWorker::prepare(&all_source_strategy(), &source_markets(), memory).unwrap();
-    let (outbound, _controls) = mpsc::channel(7);
+        SourceWorker::prepare(&all_source_strategy(), &source_markets(), memory.clone()).unwrap();
+    let (outbound, mut controls) = mpsc::channel(7);
     worker.controls[0] = Some(outbound);
     let fence = Fence::new();
+    let progress = watch::channel(transport::Progress::new()).0;
+    let feed = |worker: &mut SourceWorker, bytes: &[u8], at: u64| {
+        let mut item = Intake::new(
+            Provider::Kalshi,
+            &fence,
+            memory.copy(bytes).unwrap(),
+            Instant::now(),
+        );
+        item.source_tokens = Some(worker.tokens());
+        item.receipt_ms = Some(at);
+        item.progress = Some(progress.clone());
+        worker.process(item, at, 0, |_| Ok(()))
+    };
     worker
         .connection(Provider::Kalshi, worker.tokens()[0], Connection::Open, 0)
         .unwrap();
-    feed_source(
+    feed(
         &mut worker,
-        &fence,
-        Provider::Kalshi,
         br#"{"type":"subscribed","msg":{"sid":1,"channel":"orderbook_delta"}}"#,
         1,
-        None,
     )
     .unwrap();
-    feed_source(
+    feed(
         &mut worker,
-        &fence,
-        Provider::Kalshi,
         br#"{"type":"subscribed","msg":{"sid":3,"channel":"cfbenchmarks_value"}}"#,
         2,
-        None,
     )
     .unwrap();
+    while controls.try_recv().is_ok() {}
     let old = worker.snapshot(2).unwrap();
     worker.membership([false, true, true, true], 3).unwrap();
     assert!(!old.stream_current(Stream::Book));
     assert!(old.stream_current(Stream::Brti));
+    assert!(
+        matches!(controls.try_recv().unwrap(), Control::KalshiUnsubscribe { subscriptions, .. } if subscriptions == [1])
+    );
+    assert!(controls.try_recv().is_err());
+    assert_eq!(
+        feed(
+            &mut worker,
+            book_frame(2, "KXBTC15M-0", "[]", "[]").as_bytes(),
+            4
+        ),
+        Err(Failure::Stopped)
+    );
+    assert!(
+        progress.borrow().recovery.iter().all(Option::is_none),
+        "retired prices cannot request snapshots"
+    );
+    assert!(controls.try_recv().is_err());
+    worker.membership([true, true, true, true], 5).unwrap();
+    while let Ok(control) = controls.try_recv() {
+        assert!(
+            !matches!(
+                control,
+                Control::KalshiSubscribe {
+                    channel: Channel::Book,
+                    ..
+                }
+            ),
+            "book subscribe waits for old unsubscribe completion"
+        );
+    }
+    assert_eq!(
+        feed(
+            &mut worker,
+            book_frame(3, "KXBTC15M-0", "[]", "[]").as_bytes(),
+            6
+        ),
+        Err(Failure::Stopped)
+    );
+    assert!(progress.borrow().recovery.iter().all(Option::is_none));
+    feed(
+        &mut worker,
+        br#"{"type":"unsubscribed","sid":1,"seq":4}"#,
+        7,
+    )
+    .unwrap();
     assert!(matches!(
+        controls.try_recv().unwrap(),
+        Control::KalshiSubscribe {
+            channel: Channel::Book,
+            ..
+        }
+    ));
+    assert!(controls.try_recv().is_err());
+    feed(
+        &mut worker,
+        br#"{"type":"subscribed","msg":{"sid":9,"channel":"orderbook_delta"}}"#,
+        8,
+    )
+    .unwrap();
+    feed(
+        &mut worker,
+        book_frame(1, "KXBTC15M-0", r#"[["0.36","1"]]"#, r#"[["0.64","1"]]"#)
+            .replace("\"sid\":1", "\"sid\":9")
+            .as_bytes(),
+        9,
+    )
+    .unwrap();
+    assert!(fence.current(fence.token()));
+    assert!(worker.snapshot(9).unwrap().stream_current(Stream::Brti));
+    assert!(
+        worker
+            .state
+            .snapshot(9)
+            .unwrap()
+            .bindings
+            .iter()
+            .any(|b| b.requirement.field == "buyable_ask" && b.initialized)
+    );
+    worker.membership([false, true, true, true], 10).unwrap();
+    worker.membership([true, true, true, true], 11).unwrap();
+    worker.membership([false, true, true, true], 12).unwrap();
+    while let Ok(control) = controls.try_recv() {
+        assert!(!matches!(
+            control,
+            Control::KalshiSubscribe {
+                channel: Channel::Book,
+                ..
+            }
+        ));
+    }
+    feed(
+        &mut worker,
+        br#"{"type":"unsubscribed","sid":9,"seq":2}"#,
+        13,
+    )
+    .unwrap();
+    assert!(
+        controls.try_recv().is_err(),
+        "a cancelled reconnect stays disconnected"
+    );
+    assert!(worker.snapshot(13).unwrap().stream_current(Stream::Brti));
+}
+
+#[test]
+fn provider_ended_brti_subscription_preserves_the_book_without_command_identity() {
+    use metten_engine::sources::{Connection, Stream};
+    for code in [10, 25] {
+        let memory = memory::Memory::default();
+        let mut worker =
+            SourceWorker::prepare(&all_source_strategy(), &source_markets(), memory.clone())
+                .unwrap();
+        let fence = Fence::new();
+        worker
+            .connection(Provider::Kalshi, worker.tokens()[0], Connection::Open, 0)
+            .unwrap();
+        for (sid, channel) in [(1, "orderbook_delta"), (3, "cfbenchmarks_value")] {
+            feed_source(
+                &mut worker,
+                &fence,
+                Provider::Kalshi,
+                format!(r#"{{"type":"subscribed","msg":{{"sid":{sid},"channel":"{channel}"}}}}"#)
+                    .as_bytes(),
+                0,
+                None,
+            )
+            .unwrap();
+        }
         feed_source(
             &mut worker,
             &fence,
             Provider::Kalshi,
-            br#"{"type":"orderbook_delta","sid":1,"seq":2,"msg":{"market_ticker":"KXBTC15M-0"}}"#,
-            4,
-            None
-        ),
-        Err(Failure::Stopped)
-    ));
-    assert!(fence.current(fence.token()));
-    worker.membership([true, true, true, true], 5).unwrap();
-    feed_source(
-        &mut worker,
-        &fence,
-        Provider::Kalshi,
-        br#"{"type":"subscribed","msg":{"sid":9,"channel":"orderbook_delta"}}"#,
-        6,
-        None,
-    )
-    .unwrap();
-    assert!(worker.snapshot(6).unwrap().stream_current(Stream::Brti));
+            book_frame(1, "KXBTC15M-0", r#"[["0.36","1"]]"#, r#"[["0.64","1"]]"#).as_bytes(),
+            0,
+            None,
+        )
+        .unwrap();
+        let error = format!(
+            r#"{{"type":"error","sid":3,"seq":1,"msg":{{"code":{code},"msg":"stream ended"}}}}"#
+        );
+        for bytes in [
+            error.as_bytes(),
+            error.as_bytes(),
+            br#"{"type":"unsubscribed","sid":3,"seq":2}"#,
+        ] {
+            feed_source(&mut worker, &fence, Provider::Kalshi, bytes, 1, None).unwrap();
+            let view = worker.snapshot(1).unwrap();
+            assert!(fence.current(fence.token()));
+            assert!(view.stream_current(Stream::Book));
+            assert!(
+                view.wire_snapshot(1)["bindings"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .filter(|b| b["source"] == "brti")
+                    .all(|b| b["reason"] == "disconnected")
+            );
+        }
+    }
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

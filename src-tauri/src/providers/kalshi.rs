@@ -66,6 +66,7 @@ pub struct Kalshi {
     books: BTreeMap<String, Book>,
     sequences: BTreeMap<u64, u64>,
     sids: BTreeMap<u64, Stream>,
+    retired: BTreeMap<u64, Stream>,
     trades: BTreeMap<String, BTreeMap<String, (i128, i128, OwnedSemaphorePermit)>>,
     index: Trades,
     index_available: Option<bool>,
@@ -77,6 +78,7 @@ impl Kalshi {
             books: BTreeMap::new(),
             sequences: BTreeMap::new(),
             sids: BTreeMap::new(),
+            retired: BTreeMap::new(),
             trades: BTreeMap::new(),
             index: Trades::default(),
             index_available: None,
@@ -90,6 +92,7 @@ impl Kalshi {
         self.books.clear();
         self.sequences.clear();
         self.sids.clear();
+        self.retired.clear();
         self.index_available = None;
         self.index.reconnect()
     }
@@ -149,10 +152,21 @@ impl Kalshi {
         if let Some(stream) = stream
             && !disabled[stream as usize]
             && self.sids.get(&message.sid.ok_or(Failure::Protocol)?) != Some(&stream)
+            && self.retired.get(&message.sid.ok_or(Failure::Protocol)?) != Some(&stream)
         {
             return Err(Failure::Protocol);
         }
         Ok(stream)
+    }
+    pub fn retiring(&self, stream: Stream) -> bool {
+        self.retired.values().any(|owned| *owned == stream)
+    }
+    pub fn retired_frame(&self, bytes: &[u8]) -> bool {
+        decode::<Message<'_>>(bytes).is_ok_and(|m| {
+            m.sid
+                .and_then(|sid| self.retired.get(&sid))
+                .is_some_and(|stream| Self::stream_kind(m.kind) == Some(*stream))
+        })
     }
     pub fn sid(&self, stream: Stream) -> Option<u32> {
         self.sids
@@ -160,7 +174,13 @@ impl Kalshi {
             .find(|(_, s)| **s == stream)
             .and_then(|(sid, _)| u32::try_from(*sid).ok())
     }
-    pub fn retire(&mut self, stream: Stream) {
+    pub fn retire(&mut self, stream: Stream) -> Result<(), Failure> {
+        if let Some((&sid, _)) = self.sids.iter().find(|(_, owned)| **owned == stream) {
+            if self.retired.len() == 4 {
+                return Err(Failure::Capacity);
+            }
+            self.retired.insert(sid, stream);
+        }
         self.sequences
             .retain(|sid, _| self.sids.get(sid) != Some(&stream));
         self.sids.retain(|_, owned| *owned != stream);
@@ -171,6 +191,7 @@ impl Kalshi {
             self.index.reconnect();
             self.index_available = None;
         }
+        Ok(())
     }
     pub fn discard_book(&mut self) {
         self.books.clear();
@@ -183,7 +204,59 @@ impl Kalshi {
         mut emit: impl FnMut(Event) -> Result<(), Failure>,
     ) -> Result<(), Failure> {
         let m: Message<'_> = decode(bytes)?;
-        if matches!(m.kind, "ok" | "unsubscribed") {
+        if m.kind == "unsubscribed" {
+            m.seq.ok_or(Failure::Protocol)?;
+            let sid = m.sid.ok_or(Failure::Protocol)?;
+            let stream = self
+                .retired
+                .remove(&sid)
+                .or_else(|| self.sids.remove(&sid))
+                .ok_or(Failure::Protocol)?;
+            self.sequences.remove(&sid);
+            if let Some(id) = m.id {
+                emit(Event::ControlAcknowledged(id))?;
+            }
+            return emit(Event::Unsubscribed(
+                stream,
+                u32::try_from(sid).map_err(|_| Failure::Capacity)?,
+            ));
+        }
+        if m.kind == "error" {
+            #[derive(Deserialize)]
+            struct Rejected {
+                code: u32,
+            }
+            let rejected: Rejected = decode(m.msg.ok_or(Failure::Protocol)?.get().as_bytes())?;
+            if matches!(rejected.code, 10 | 25)
+                && let Some(sid) = m.sid
+            {
+                if self.retired.contains_key(&sid) {
+                    return Ok(());
+                }
+                let stream = *self.sids.get(&sid).ok_or(Failure::Protocol)?;
+                self.retire(stream)?;
+                return emit(Event::SubscriptionEnded(
+                    stream,
+                    u32::try_from(sid).map_err(|_| Failure::Capacity)?,
+                ));
+            }
+            return emit(Event::ControlRejected(
+                m.id.ok_or(Failure::Protocol)?,
+                rejected.code,
+            ));
+        }
+        if let Some(sid) = m.sid
+            && let Some(&stream) = self.retired.get(&sid)
+        {
+            if m.kind == "ok" {
+                return emit(Event::ControlAcknowledged(m.id.ok_or(Failure::Protocol)?));
+            }
+            if Self::stream_kind(m.kind) == Some(stream) {
+                return Ok(());
+            }
+            return Err(Failure::Protocol);
+        }
+        if m.kind == "ok" {
             if let Some(sid) = m.sid {
                 let stream = *self.sids.get(&sid).ok_or(Failure::Protocol)?;
                 match self.sequence(sid, m.seq.ok_or(Failure::Protocol)?) {
@@ -197,19 +270,8 @@ impl Kalshi {
                     }
                     Err(error) => return Err(error),
                 }
-            } else if m.kind == "unsubscribed" {
-                return Err(Failure::Protocol);
             }
             return emit(Event::ControlAcknowledged(m.id.ok_or(Failure::Protocol)?));
-        }
-        if m.kind == "error" {
-            #[derive(Deserialize)]
-            struct Rejected {
-                code: u32,
-            }
-            let rejected: Rejected = decode(m.msg.ok_or(Failure::Protocol)?.get().as_bytes())?;
-            let _ = rejected.code; // Unknown provider codes are not inferred to mean entitlement denial.
-            return emit(Event::ControlRejected(m.id.ok_or(Failure::Protocol)?));
         }
         if m.kind == "subscribed" {
             #[derive(Deserialize)]
@@ -567,6 +629,44 @@ fn levels(raw: &RawValue) -> Result<BTreeMap<i128, i128>, Failure> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn retired_subscription_identity_is_bounded_and_released_by_completion() {
+        for channel in ["orderbook_delta", "cfbenchmarks_value"] {
+            let mut adapter = Kalshi::new(Memory::default());
+            let stream = if channel == "orderbook_delta" {
+                Stream::Book
+            } else {
+                Stream::Brti
+            };
+            for sid in 1..=5 {
+                let ack = format!(
+                    r#"{{"type":"subscribed","msg":{{"sid":{sid},"channel":"{channel}"}}}}"#
+                );
+                adapter.decode(ack.as_bytes(), &[], |_| Ok(())).unwrap();
+                let result = adapter.retire(stream);
+                assert_eq!(
+                    result,
+                    if sid == 5 {
+                        Err(Failure::Capacity)
+                    } else {
+                        Ok(())
+                    }
+                );
+            }
+            adapter
+                .decode(
+                    br#"{"type":"unsubscribed","id":1,"sid":1,"seq":1}"#,
+                    &[],
+                    |_| Ok(()),
+                )
+                .unwrap();
+            adapter.retire(stream).unwrap();
+            assert_eq!(adapter.retired.len(), 4);
+            adapter.reconnect();
+            assert!(adapter.retired.is_empty());
+        }
+    }
+
     #[test]
     fn global_lifecycle_variants_validate_and_share_one_sequence() {
         let mut adapter = Kalshi::new(Memory::default());

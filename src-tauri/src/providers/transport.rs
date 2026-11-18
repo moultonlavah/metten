@@ -809,14 +809,16 @@ impl Transport {
                                     if !recovery
                                         || p.recovery.iter().flatten().any(|c| c == command)
                                     {
-                                        admitted = permit.start().map(|_| true);
+                                        admitted = p
+                                            .request(command)
+                                            .and_then(|()| permit.start())
+                                            .map(|()| true);
                                         if admitted == Ok(true) {
                                             for pending in &mut p.recovery {
                                                 if pending.as_ref() == Some(command) {
                                                     *pending = None;
                                                 }
                                             }
-                                            p.request(command);
                                         }
                                     }
                                 });
@@ -881,6 +883,7 @@ pub(super) struct Progress {
     books: [Option<String>; 2],
     book_data: [bool; 2],
     pending_ids: [Option<u32>; 6],
+    unsubscribe_ids: [Option<u32>; 4],
     pub recovery: [Option<Control>; 3],
     disabled: [bool; 6],
     pub tokens: [Option<metten_engine::sources::StreamToken>; 6],
@@ -895,13 +898,23 @@ impl Progress {
             books: [None, None],
             book_data: [false; 2],
             pending_ids: [None; 6],
+            unsubscribe_ids: [None; 4],
             recovery: [None, None, None],
             disabled: [false; 6],
             tokens: [None; 6],
             desired_book: None,
         }
     }
-    fn request(&mut self, command: &Control) {
+    fn request(&mut self, command: &Control) -> Result<(), Failure> {
+        if let Control::KalshiUnsubscribe { id, .. } = command {
+            let slot = self
+                .unsubscribe_ids
+                .iter_mut()
+                .find(|pending| pending.is_none())
+                .ok_or(Failure::Capacity)?;
+            *slot = Some(*id);
+            return Ok(());
+        }
         use metten_engine::sources::Stream;
         let stream = match command {
             Control::Coinbase { subscribe: true } => Stream::Coinbase,
@@ -921,7 +934,7 @@ impl Progress {
                 ..
             } => Stream::Trades,
             Control::KalshiIndexes { .. } => Stream::Brti,
-            _ => return,
+            _ => return Ok(()),
         };
         if let Control::KalshiTradeUpdate { token, .. } = command {
             self.tokens[Stream::Trades as usize] = Some(*token);
@@ -957,6 +970,7 @@ impl Progress {
             self.books = std::array::from_fn(|i| markets.get(i).cloned());
             self.book_data = [false; 2];
         }
+        Ok(())
     }
     pub fn disable(&mut self, stream: metten_engine::sources::Stream) {
         self.requested[stream as usize] = None;
@@ -986,7 +1000,20 @@ impl Progress {
             .position(|pending| *pending == Some(id))
             .map(|i| super::source::SOURCE_STREAMS[i])
     }
+    pub fn complete_unsubscribe(&mut self, id: u32) -> bool {
+        if let Some(slot) = self
+            .unsubscribe_ids
+            .iter_mut()
+            .find(|pending| **pending == Some(id))
+        {
+            *slot = None;
+            true
+        } else {
+            false
+        }
+    }
     pub fn acknowledge(&mut self, id: u32) {
+        self.complete_unsubscribe(id);
         for (i, pending) in self.pending_ids.iter().enumerate() {
             if *pending == Some(id) {
                 self.acknowledged[i] = true;
@@ -1050,11 +1077,30 @@ mod failure_tests {
     #[test]
     fn acknowledgment_and_both_replacement_books_have_independent_deadlines() {
         let mut p = Progress::new();
+        for id in 1..=4 {
+            p.request(&Control::KalshiUnsubscribe {
+                id,
+                subscriptions: vec![id],
+            })
+            .unwrap();
+        }
+        assert_eq!(
+            p.request(&Control::KalshiUnsubscribe {
+                id: 5,
+                subscriptions: vec![5]
+            }),
+            Err(Failure::Capacity)
+        );
+        for id in 1..=4 {
+            p.acknowledge(id);
+        }
+        assert!(p.unsubscribe_ids.iter().all(Option::is_none));
         p.request(&Control::KalshiSubscribe {
             id: 1,
             channel: Channel::Book,
             markets: vec!["KXBTC15M-M".into(), "KXBTC15M-N".into()],
-        });
+        })
+        .unwrap();
         let start = p.requested[0].unwrap();
         assert_eq!(p.deadline(), Some(start + Duration::from_secs(5)));
         p.acknowledge(1);
@@ -1128,6 +1174,193 @@ mod failure_tests {
         }
     }
     #[test]
+    fn provider_ending_racing_with_unsubscribe_keeps_the_other_stream() {
+        for completion_first in [false, true] {
+            let memory = memory::Memory::default();
+            let mut worker = SourceWorker::prepare(
+                &super::super::tests::all_source_strategy(),
+                &super::super::tests::source_markets(),
+                memory.clone(),
+            )
+            .unwrap();
+            let fence = Fence::new();
+            worker
+                .connection(
+                    Provider::Kalshi,
+                    worker.tokens()[0],
+                    metten_engine::sources::Connection::Open,
+                    0,
+                )
+                .unwrap();
+            let (outbound, _controls) = mpsc::channel(7);
+            worker.controls[0] = Some(outbound);
+            let progress = watch::channel(Progress::new()).0;
+            let feed = |worker: &mut SourceWorker, bytes: &[u8]| {
+                let mut item = Intake::new(
+                    Provider::Kalshi,
+                    &fence,
+                    memory.copy(bytes).unwrap(),
+                    Instant::now(),
+                );
+                item.source_tokens = Some(worker.tokens());
+                item.receipt_ms = Some(0);
+                item.progress = Some(progress.clone());
+                worker.process(item, 0, 0, |_| Ok(()))
+            };
+            for (sid, channel) in [(1, "orderbook_delta"), (3, "cfbenchmarks_value")] {
+                feed(
+                    &mut worker,
+                    format!(
+                        r#"{{"type":"subscribed","msg":{{"sid":{sid},"channel":"{channel}"}}}}"#
+                    )
+                    .as_bytes(),
+                )
+                .unwrap();
+            }
+            worker.membership([true, false, true, true], 0).unwrap();
+            progress.send_modify(|p| {
+                p.request(&Control::KalshiUnsubscribe {
+                    id: 55,
+                    subscriptions: vec![3],
+                })
+                .unwrap()
+            });
+            feed(
+                &mut worker,
+                br#"{"type":"error","sid":3,"seq":1,"msg":{"code":10}}"#,
+            )
+            .unwrap();
+            let completed = br#"{"type":"unsubscribed","sid":3,"seq":2}"#.as_slice();
+            let missing = br#"{"type":"error","id":55,"msg":{"code":7}}"#.as_slice();
+            for frame in if completion_first {
+                [completed, missing]
+            } else {
+                [missing, completed]
+            } {
+                feed(&mut worker, frame).unwrap();
+                assert!(fence.current(fence.token()));
+                assert!(
+                    worker
+                        .snapshot(0)
+                        .unwrap()
+                        .stream_current(metten_engine::sources::Stream::Book)
+                );
+            }
+            assert_eq!(
+                feed(
+                    &mut worker,
+                    br#"{"type":"error","id":999,"msg":{"code":7}}"#
+                ),
+                Err(Failure::Protocol)
+            );
+        }
+    }
+
+    #[test]
+    fn malformed_lifecycle_cancels_market_waits_without_interrupting_brti() {
+        use metten_engine::sources::Stream;
+        let memory = memory::Memory::default();
+        let mut worker = SourceWorker::prepare(
+            &super::super::tests::all_source_strategy(),
+            &super::super::tests::source_markets(),
+            memory.clone(),
+        )
+        .unwrap();
+        let fence = Fence::new();
+        worker
+            .connection(
+                Provider::Kalshi,
+                worker.tokens()[0],
+                metten_engine::sources::Connection::Open,
+                0,
+            )
+            .unwrap();
+        let progress = watch::channel(Progress::new()).0;
+        let feed = |worker: &mut SourceWorker, bytes: &[u8]| {
+            let mut item = Intake::new(
+                Provider::Kalshi,
+                &fence,
+                memory.copy(bytes).unwrap(),
+                Instant::now(),
+            );
+            item.source_tokens = Some(worker.tokens());
+            item.receipt_ms = Some(0);
+            item.progress = Some(progress.clone());
+            worker.process(item, 0, 0, |_| Ok(()))
+        };
+        for (id, channel) in [
+            (1, Channel::Book),
+            (2, Channel::Trade),
+            (3, Channel::Brti),
+            (4, Channel::Lifecycle),
+        ] {
+            progress.send_modify(|p| {
+                p.request(&Control::KalshiSubscribe {
+                    id,
+                    channel,
+                    markets: if matches!(channel, Channel::Book | Channel::Trade) {
+                        vec!["KXBTC15M-0".into()]
+                    } else {
+                        vec![]
+                    },
+                })
+                .unwrap()
+            });
+        }
+        for (sid, channel) in [
+            (1, "orderbook_delta"),
+            (2, "trade"),
+            (3, "cfbenchmarks_value"),
+            (4, "market_lifecycle_v2"),
+        ] {
+            feed(
+                &mut worker,
+                format!(r#"{{"type":"subscribed","msg":{{"sid":{sid},"channel":"{channel}"}}}}"#)
+                    .as_bytes(),
+            )
+            .unwrap();
+        }
+        feed(&mut worker, br#"{"type":"cfbenchmarks_value_indexlist","sid":3,"seq":1,"msg":{"index_ids":["BRTI"]}}"#).unwrap();
+        feed(&mut worker, br#"{"type":"cfbenchmarks_value","sid":3,"seq":2,"msg":{"index_id":"BRTI","data":"{\"id\":\"BRTI\",\"time\":1,\"value\":\"68000\"}"}}"#).unwrap();
+        let before = worker.snapshot(0).unwrap();
+        assert!(
+            progress.borrow().deadline().is_some(),
+            "books and trades still await data"
+        );
+        progress.send_modify(|p| {
+            p.recover(Control::KalshiBookUpdate {
+                id: 20,
+                sid: 1,
+                action: BookAction::Snapshot,
+                markets: vec!["KXBTC15M-0".into()],
+                token: None,
+            })
+        });
+        assert_eq!(
+            feed(
+                &mut worker,
+                br#"{"type":"market_lifecycle_v2","sid":4,"seq":1,"msg":{"market_ticker":42}}"#
+            ),
+            Err(Failure::Protocol)
+        );
+        feed(&mut worker, br#"{"type":"unsubscribed","sid":4,"seq":2}"#).unwrap();
+        assert!(progress.borrow().deadline().is_none());
+        assert!(progress.borrow().recovery.iter().all(Option::is_none));
+        assert!(fence.current(fence.token()));
+        assert!(before.stream_current(Stream::Brti));
+        assert!(!before.stream_current(Stream::Book));
+        let view = worker.snapshot(0).unwrap().wire_snapshot(0);
+        assert!(
+            view["bindings"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .filter(|b| b["source"] == "kalshi" && b["field"] == "buyable_ask")
+                .all(|b| b["reason"] == "invalid_value")
+        );
+    }
+
+    #[test]
     fn known_brti_command_rejection_does_not_discard_contract_data() {
         let memory = memory::Memory::default();
         let strategy = super::super::tests::all_source_strategy();
@@ -1143,11 +1376,13 @@ mod failure_tests {
             )
             .unwrap();
         let mut progress = Progress::new();
-        progress.request(&Control::KalshiSubscribe {
-            id: 3,
-            channel: Channel::Brti,
-            markets: vec![],
-        });
+        progress
+            .request(&Control::KalshiSubscribe {
+                id: 3,
+                channel: Channel::Brti,
+                markets: vec![],
+            })
+            .unwrap();
         let progress = watch::channel(progress).0;
         let feed = |worker: &mut SourceWorker, bytes: &[u8]| {
             let mut item = Intake::new(
@@ -1177,6 +1412,15 @@ mod failure_tests {
         assert!(before.stream_current(metten_engine::sources::Stream::Book));
         assert!(!before.stream_current(metten_engine::sources::Stream::Brti));
         assert!(worker.state.snapshot(0).unwrap().bindings.iter().filter(|b|b.requirement.field=="buyable_ask" && matches!(&b.binding.scope,metten_engine::strategy::BindingScope::Contract {market_id,..} if market_id=="KXBTC15M-0")).all(|b|b.initialized));
+        let view = worker.snapshot(0).unwrap().wire_snapshot(0);
+        assert!(
+            view["bindings"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .filter(|b| b["source"] == "brti")
+                .all(|b| b["reason"] == "access_refused")
+        );
         let token = worker.tokens()[2];
         feed(&mut worker, br#"{"type":"error","id":3,"msg":{"code":9}}"#).unwrap();
         assert_eq!(worker.tokens()[2], token);

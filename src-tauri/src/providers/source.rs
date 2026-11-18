@@ -228,6 +228,13 @@ impl SourceWorker {
         }
         self.at = at;
         let expired = Instant::now().saturating_duration_since(item.received_at) > MAX_INTAKE_AGE;
+        if item.provider == Provider::Kalshi
+            && !expired
+            && self.kalshi.retired_frame(item.bytes.as_slice())
+        {
+            item.fence.reject();
+            return Err(Failure::Stopped);
+        }
         let wire_stream = if item.provider == Provider::Kalshi && !expired {
             let disabled = std::array::from_fn(|i| {
                 !self.enabled[if i == metten_engine::sources::Stream::Brti as usize {
@@ -263,6 +270,8 @@ impl SourceWorker {
         {
             self.kalshi.skip_obsolete(item.bytes.as_slice())?;
             if stream == metten_engine::sources::Stream::Book
+                && !self.blocked[stream as usize]
+                && self.enabled[0]
                 && let (Some(progress), Some(sid)) = (&item.progress, self.book_sid)
             {
                 let token = self.state.token(stream);
@@ -435,8 +444,71 @@ impl SourceWorker {
                 }
                 return Ok(());
             }
-            if let wire::Event::ControlRejected(id) = event {
+            if let wire::Event::SubscriptionEnded(stream, sid)
+            | wire::Event::Unsubscribed(stream, sid) = event
+            {
+                let ended = matches!(event, wire::Event::SubscriptionEnded(..))
+                    || sids[stream as usize] == Some(sid);
+                if sids[stream as usize] == Some(sid) {
+                    sids[stream as usize] = None;
+                }
+                if stream == metten_engine::sources::Stream::Book && *book_sid == Some(sid) {
+                    *book_sid = None;
+                }
+                if stream == metten_engine::sources::Stream::Trades && *trade_sid == Some(sid) {
+                    *trade_sid = None;
+                }
+                if ended && !blocked[stream as usize] {
+                    let scopes = if stream == metten_engine::sources::Stream::Metadata {
+                        &MARKET_STREAMS[..]
+                    } else {
+                        std::slice::from_ref(&stream)
+                    };
+                    revoke_gates(gates, scopes)?;
+                    for scope in scopes {
+                        blocked[*scope as usize] = true;
+                    }
+                    consume(
+                        state
+                            .invalidate(
+                                metten_engine::sources::Scope::Stream(stream),
+                                Unavailable::Disconnected,
+                                at,
+                                None,
+                            )
+                            .map_err(|_| Failure::Protocol)?,
+                    )?;
+                    if let Some(progress) = &item.progress {
+                        progress.send_modify(|p| {
+                            for scope in scopes {
+                                p.disable(*scope);
+                            }
+                        });
+                    }
+                } else if enabled[if stream == metten_engine::sources::Stream::Brti {
+                    1
+                } else {
+                    0
+                }] && !blocked[stream as usize]
+                {
+                    *command_id = command_id.checked_add(1).ok_or(Failure::Capacity)?;
+                    if let Some(control) = subscription(stream, *command_id, tickers)
+                        && let Some(outbound) = &outbound
+                    {
+                        outbound.try_send(control).map_err(|_| Failure::Capacity)?;
+                    }
+                }
+                return Ok(());
+            }
+            if let wire::Event::ControlRejected(id, code) = event {
                 let progress = item.progress.as_ref().ok_or(Failure::Protocol)?;
+                if code == 7 {
+                    let mut cleanup = false;
+                    progress.send_modify(|p| cleanup = p.complete_unsubscribe(id));
+                    if cleanup {
+                        return Ok(());
+                    }
+                }
                 let stream = { progress.borrow().requested_stream(id) }.ok_or(Failure::Protocol)?;
                 if blocked[stream as usize] {
                     return Ok(());
@@ -454,7 +526,11 @@ impl SourceWorker {
                     state
                         .invalidate(
                             metten_engine::sources::Scope::Stream(stream),
-                            metten_engine::sources::Unavailable::InvalidValue,
+                            if code == 9 {
+                                Unavailable::Access
+                            } else {
+                                Unavailable::InvalidValue
+                            },
                             at,
                             None,
                         )
@@ -490,6 +566,7 @@ impl SourceWorker {
                             })
                             .map_err(|_| Failure::Capacity)?;
                     }
+                    sids[*stream as usize] = None;
                     return Ok(());
                 }
                 match stream {
@@ -576,7 +653,7 @@ impl SourceWorker {
         for index in 0..2 {
             if !self.enabled[index] {
                 for &stream in logical_streams(index) {
-                    self.kalshi.retire(stream);
+                    self.kalshi.retire(stream)?;
                 }
             }
         }
@@ -587,12 +664,14 @@ impl SourceWorker {
             if let Some(stream) = wire_stream
                 .filter(|_| !expired && matches!(error, Failure::Protocol | Failure::Capacity))
             {
-                self.blocked[stream as usize] = true;
                 let streams = if stream == metten_engine::sources::Stream::Metadata {
                     &MARKET_STREAMS[..]
                 } else {
                     std::slice::from_ref(&stream)
                 };
+                for affected in streams {
+                    self.blocked[*affected as usize] = true;
+                }
                 revoke_gates(&self.gates, streams)?;
                 consume(
                     self.state
@@ -608,11 +687,15 @@ impl SourceWorker {
                         )
                         .map_err(|_| Failure::Protocol)?,
                 )?;
-                if stream == metten_engine::sources::Stream::Book {
+                if streams.contains(&metten_engine::sources::Stream::Book) {
                     self.kalshi.discard_book();
                 }
                 if let Some(progress) = &item.progress {
-                    progress.send_modify(|p| p.disable(stream));
+                    progress.send_modify(|p| {
+                        for affected in streams {
+                            p.disable(*affected);
+                        }
+                    });
                 }
                 if let (Some(sid), Some(outbound)) = (
                     self.kalshi.sid(stream),
@@ -899,26 +982,10 @@ impl SourceWorker {
                             id: self.command_id,
                             subscriptions: vec![sid],
                         })
+                } else if self.kalshi.retiring(stream) {
+                    None
                 } else {
-                    let channel = match stream {
-                        Stream::Book => Channel::Book,
-                        Stream::Trades => Channel::Trade,
-                        Stream::Brti => Channel::Brti,
-                        Stream::Metadata => Channel::Lifecycle,
-                        _ => continue,
-                    };
-                    if matches!(stream, Stream::Book | Stream::Trades) && self.tickers.is_empty() {
-                        continue;
-                    }
-                    Some(Control::KalshiSubscribe {
-                        id: self.command_id,
-                        channel,
-                        markets: if matches!(stream, Stream::Book | Stream::Trades) {
-                            self.tickers.clone()
-                        } else {
-                            vec![]
-                        },
-                    })
+                    subscription(stream, self.command_id, &self.tickers)
                 };
                 if let Some(command) = command {
                     self.controls[provider.index()]
@@ -930,7 +997,13 @@ impl SourceWorker {
             }
             if !enabled && index < 2 {
                 for &stream in streams {
-                    self.kalshi.retire(stream);
+                    self.kalshi.retire(stream)?;
+                    if stream == Stream::Book {
+                        self.book_sid = None;
+                    }
+                    if stream == Stream::Trades {
+                        self.trade_sid = None;
+                    }
                 }
             }
             if index == 1 {
@@ -939,6 +1012,29 @@ impl SourceWorker {
         }
         Ok(())
     }
+}
+fn subscription(
+    stream: metten_engine::sources::Stream,
+    id: u32,
+    tickers: &[String],
+) -> Option<Control> {
+    use metten_engine::sources::Stream;
+    let channel = match stream {
+        Stream::Book => Channel::Book,
+        Stream::Trades => Channel::Trade,
+        Stream::Brti => Channel::Brti,
+        Stream::Metadata => Channel::Lifecycle,
+        _ => return None,
+    };
+    let scoped = matches!(stream, Stream::Book | Stream::Trades);
+    if scoped && tickers.is_empty() {
+        return None;
+    }
+    Some(Control::KalshiSubscribe {
+        id,
+        channel,
+        markets: if scoped { tickers.to_vec() } else { vec![] },
+    })
 }
 fn provider_streams(provider: Provider) -> &'static [metten_engine::sources::Stream] {
     use metten_engine::sources::Stream;
@@ -1313,7 +1409,10 @@ fn apply_source_event(
                 .invalidate(Scope::Stream(stream), Unavailable::Awaiting, at, None)
                 .map_err(|_| Failure::Protocol)?,
         ),
-        wire::Event::Gap(..) | wire::Event::ControlRejected(_) => Err(Failure::InvalidRequest),
+        wire::Event::Gap(..)
+        | wire::Event::ControlRejected(..)
+        | wire::Event::SubscriptionEnded(..)
+        | wire::Event::Unsubscribed(..) => Err(Failure::InvalidRequest),
         wire::Event::MetadataChanged => consume(
             state
                 .invalidate(Scope::Market, Unavailable::MetadataChanged, at, None)
@@ -1904,7 +2003,7 @@ impl SourceWorker {
                         && r.instrument != "current_market"
                         && (r.field == "last_trade") == (stream == Stream::Trades)
                 });
-                if !needed || self.blocked[stream as usize] {
+                if !needed || self.blocked[stream as usize] || self.kalshi.retiring(stream) {
                     continue;
                 }
                 for (markets, action) in [(&removed, BookAction::Delete), (&added, BookAction::Add)]

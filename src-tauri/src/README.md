@@ -357,7 +357,23 @@ handles. No completion, saved credential or window opening connects automaticall
 logical desired set shares the existing worker and three task slots. Membership
 changes revoke stream permissions before publication, preserve the shared
 Kalshi/BRTI socket while either consumer remains, and retire bounded decoder SIDs
-without resetting the other source. A local two-second membership wait confirms
+without resetting the other source. The Kalshi decoder retains at most four retired
+subscription IDs until unsubscribe completion, accepts their control completion,
+and discards their late prices before recovery logic even after that logical source
+is enabled again. Book/trade control IDs clear on retirement. A same-channel
+subscribe waits for completion and runs only while that source remains desired;
+market-discovery updates also respect this wait. Completions release this bounded
+identity state; reconnect clears it. Code9 command refusals map to access_refused
+for the matched stream. Known-SID provider endings (codes10/25 and unsubscribed,
+with no command ID required) invalidate only that stream and disable its wait
+and recovery state, preserving the other logical source. Completion of an already
+blocked stream preserves its original invalid/overflow/access reason. Malformed
+lifecycle data blocks all affected market streams and cancels each stream's
+transport wait/recovery, leaving BRTI's independent stream intact. Transport
+progress retains at most four outstanding unsubscribe command IDs; a matching
+code7 is cleanup, while an unknown command remains a protocol failure. A command
+acknowledgment releases its tracking slot; capacity exhaustion refuses a new
+write rather than losing command identity. A local two-second membership wait confirms
 the worker observed the desired set before connection start; it grants no price
 lease. `SourceView::wire_snapshot/wire_details` recheck permissions, preserve exact
 units/identity/receipt age and distinguish received values from usable inputs.
