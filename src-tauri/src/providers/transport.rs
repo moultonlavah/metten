@@ -883,7 +883,8 @@ pub(super) struct Progress {
     books: [Option<String>; 2],
     book_data: [bool; 2],
     pending_ids: [Option<u32>; 6],
-    unsubscribe_ids: [Option<u32>; 4],
+    unsubscribe_ids: [Option<(u32, Vec<u32>)>; 4],
+    completed_unsubscribe_ids: [Option<u32>; 4],
     pub recovery: [Option<Control>; 3],
     disabled: [bool; 6],
     pub tokens: [Option<metten_engine::sources::StreamToken>; 6],
@@ -898,7 +899,8 @@ impl Progress {
             books: [None, None],
             book_data: [false; 2],
             pending_ids: [None; 6],
-            unsubscribe_ids: [None; 4],
+            unsubscribe_ids: [const { None }; 4],
+            completed_unsubscribe_ids: [None; 4],
             recovery: [None, None, None],
             disabled: [false; 6],
             tokens: [None; 6],
@@ -906,13 +908,16 @@ impl Progress {
         }
     }
     fn request(&mut self, command: &Control) -> Result<(), Failure> {
-        if let Control::KalshiUnsubscribe { id, .. } = command {
+        if let Control::KalshiUnsubscribe { id, subscriptions } = command {
+            if subscriptions.is_empty() || subscriptions.len() > 4 {
+                return Err(Failure::Capacity);
+            }
             let slot = self
                 .unsubscribe_ids
                 .iter_mut()
                 .find(|pending| pending.is_none())
                 .ok_or(Failure::Capacity)?;
-            *slot = Some(*id);
+            *slot = Some((*id, subscriptions.clone()));
             return Ok(());
         }
         use metten_engine::sources::Stream;
@@ -1000,9 +1005,34 @@ impl Progress {
             .position(|pending| *pending == Some(id))
             .map(|i| super::source::SOURCE_STREAMS[i])
     }
+    pub fn unsubscribed(&mut self, sid: u32) {
+        for slot in &mut self.unsubscribe_ids {
+            if let Some((id, subscriptions)) = slot {
+                subscriptions.retain(|pending| *pending != sid);
+                if subscriptions.is_empty() {
+                    // Keep bounded command history for a code-7 reply racing this completion.
+                    let vacant = self
+                        .completed_unsubscribe_ids
+                        .iter()
+                        .position(Option::is_none)
+                        .unwrap_or(self.completed_unsubscribe_ids.len() - 1);
+                    self.completed_unsubscribe_ids[..=vacant].rotate_right(1);
+                    self.completed_unsubscribe_ids[0] = Some(*id);
+                    *slot = None;
+                }
+            }
+        }
+    }
     pub fn complete_unsubscribe(&mut self, id: u32) -> bool {
         if let Some(slot) = self
             .unsubscribe_ids
+            .iter_mut()
+            .find(|pending| pending.as_ref().is_some_and(|(pending, _)| *pending == id))
+        {
+            *slot = None;
+            true
+        } else if let Some(slot) = self
+            .completed_unsubscribe_ids
             .iter_mut()
             .find(|pending| **pending == Some(id))
         {
@@ -1174,6 +1204,54 @@ mod failure_tests {
         }
     }
     #[test]
+    fn idless_unsubscribe_completion_reuses_slots_and_preserves_other_commands() {
+        let mut p = Progress::new();
+        p.request(&Control::KalshiUnsubscribe {
+            id: 100,
+            subscriptions: vec![10, 11],
+        })
+        .unwrap();
+        for id in 1..=12 {
+            p.request(&Control::KalshiUnsubscribe {
+                id,
+                subscriptions: vec![3],
+            })
+            .unwrap();
+            p.unsubscribed(3);
+            assert!(p.complete_unsubscribe(id));
+            assert!(!p.complete_unsubscribe(id));
+            assert_eq!(p.unsubscribe_ids.iter().flatten().count(), 1);
+        }
+        p.unsubscribed(10);
+        assert_eq!(p.unsubscribe_ids.iter().flatten().count(), 1);
+        p.unsubscribed(11);
+        assert!(p.unsubscribe_ids.iter().all(Option::is_none));
+        assert!(p.complete_unsubscribe(100));
+        assert!(!p.complete_unsubscribe(999));
+        for id in 100..=104 {
+            p.request(&Control::KalshiUnsubscribe {
+                id,
+                subscriptions: vec![3],
+            })
+            .unwrap();
+            p.unsubscribed(3);
+            if id == 101 {
+                assert!(p.complete_unsubscribe(id));
+            }
+        }
+        assert!(p.complete_unsubscribe(100));
+        for id in 20..=31 {
+            p.request(&Control::KalshiUnsubscribe {
+                id,
+                subscriptions: vec![3],
+            })
+            .unwrap();
+            p.unsubscribed(3);
+        }
+        assert!(p.unsubscribe_ids.iter().all(Option::is_none));
+        assert_eq!(p.completed_unsubscribe_ids.iter().flatten().count(), 4);
+    }
+    #[test]
     fn provider_ending_racing_with_unsubscribe_keeps_the_other_stream() {
         for completion_first in [false, true] {
             let memory = memory::Memory::default();
@@ -1238,6 +1316,15 @@ mod failure_tests {
                 [missing, completed]
             } {
                 feed(&mut worker, frame).unwrap();
+                if frame == completed {
+                    assert!(
+                        progress
+                            .borrow()
+                            .unsubscribe_ids
+                            .iter()
+                            .all(Option::is_none)
+                    );
+                }
                 assert!(fence.current(fence.token()));
                 assert!(
                     worker

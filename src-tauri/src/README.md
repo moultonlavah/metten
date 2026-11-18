@@ -133,6 +133,11 @@ before publication. Step 4 adds the read-only source owner described below; no p
 The worker consumer must perform bounded work; a nonresponsive worker retains
 its handle and blocks successful shutdown. A fresh owner cannot revive an old fence.
 
+Unsubscribe tracking holds at most four commands with up to four subscription IDs
+per command. ID-less completion releases the matching subscription; the slot is
+reusable after all its subscriptions complete. The last four completed command IDs
+remain recognizable for racing code-7 replies; unknown command IDs still fail.
+
 [providers/transport.rs](providers/transport.rs) owns a pooled fixed-environment
 HTTPS client and fixed TLS WebSocket destinations. GET routes and control messages
 are finite Rust enums; account reads, purchase routes and arbitrary URLs/methods

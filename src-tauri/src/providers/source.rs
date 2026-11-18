@@ -447,6 +447,11 @@ impl SourceWorker {
             if let wire::Event::SubscriptionEnded(stream, sid)
             | wire::Event::Unsubscribed(stream, sid) = event
             {
+                if matches!(event, wire::Event::Unsubscribed(..))
+                    && let Some(progress) = &item.progress
+                {
+                    progress.send_modify(|p| p.unsubscribed(sid));
+                }
                 let ended = matches!(event, wire::Event::SubscriptionEnded(..))
                     || sids[stream as usize] == Some(sid);
                 if sids[stream as usize] == Some(sid) {
